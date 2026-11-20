@@ -80,6 +80,10 @@ A **phase** is a chunk of work inside a session: the grilling, the implementatio
 
 Read [PHASE-BOUNDARIES.md](PHASE-BOUNDARIES.md) for the ordered tree: the five questions, the reasoning behind each branch, and why the primary-source cost makes **Continue** the one to rule out first. Make the decision **at** a boundary; mid-phase, continue or split the rest into subagents.
 
+Licznikiem tego nie rozstrzygniesz: model nie widzi swojego zużycia tokenów, a harness zwykle nie
+wstawia go do rozmowy. Gdy nie wiesz, na której gałęzi drzewa jesteś, wywołaj **`/granica`** — czyta
+stan tej sesji i mówi, co wpisać.
+
 ## Standalone
 
 Off the main flow entirely.
@@ -94,27 +98,6 @@ Off the main flow entirely.
 - **`/teach`**: learn a concept over multiple sessions, using the current directory as a stateful workspace.
 - **`/writing-for-agents`** is the reference for writing documents agents consume: skills, AGENTS.md, pointed-at docs.
 
-
-## Budżet kontekstu
-
-Sesja ma skończyć się **przed** wyczerpaniem okna, nie po — ale nie Ty mierzysz okno. **Nie znasz
-swojego zużycia tokenów**: nie widzisz licznika, a wymyślona liczba jest gorsza niż jej brak.
-
-Pracuj na sygnałach, które faktycznie widzisz:
-- harness wypisał ostrzeżenie o kontekście albo sesja przeszła auto-condense — granica jest już za Tobą,
-- czytasz po raz drugi to, co w tej sesji już czytałeś — kontekst zaczyna się rozjeżdżać,
-- liczba tur i rozmiar wyników narzędzi rosną szybciej niż postęp w tickecie,
-- wracasz do decyzji, którą ta sesja już podjęła.
-
-Gdy któryś z nich wystąpi: dokończ bieżący krok, **zatrzymaj się na granicy fazy** i powiedz
-użytkownikowi, że czas zamknąć sesję — z jednozdaniowym uzasadnieniem, które z sygnałów zadziałał.
-Nie przerywaj w środku kroku i nie rozstrzygaj sam, czy to `/clear`, `/handoff` czy `/compact`:
-to wybór człowieka (drzewo w `ask-matt/PHASE-BOUNDARIES.md`).
-
-Na granicy fazy jedno z dwóch: `/compact` (streszczenie, ten sam task — traci szczegóły) albo
-**New Task + handoff** (czysty kontekst — zachowuje to, co zapiszesz). Handoff to pięć linii: co
-zrobione, co zostało, gdzie leży plan, jaki jest następny krok, czego nie ruszać. Nie compactuj
-w środku kroku i nie przenoś sesji „na chwilę” — przeniesienie kosztuje więcej niż dokończenie.
 
 **Several independent tickets, and you want them done in one night** → `/implement-wave`: parallel subagents over disjoint file sets, parent commits per ticket.
 

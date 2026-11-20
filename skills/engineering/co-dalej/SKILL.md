@@ -53,35 +53,6 @@ Od góry, pierwsze trafienie wygrywa:
 Trzy opcje to maksimum. Skończ pytaniem **„idziemy w to?”** i czekaj na odpowiedź.
 
 
-## Budżet kontekstu
-
-Sesja ma skończyć się **przed** wyczerpaniem okna, nie po — ale nie Ty mierzysz okno. **Nie znasz
-swojego zużycia tokenów**: nie widzisz licznika, a wymyślona liczba jest gorsza niż jej brak.
-
-Pracuj na sygnałach, które faktycznie widzisz:
-- harness wypisał ostrzeżenie o kontekście albo sesja przeszła auto-condense — granica jest już za Tobą,
-- czytasz po raz drugi to, co w tej sesji już czytałeś — kontekst zaczyna się rozjeżdżać,
-- liczba tur i rozmiar wyników narzędzi rosną szybciej niż postęp w tickecie,
-- wracasz do decyzji, którą ta sesja już podjęła.
-
-Gdy któryś z nich wystąpi: dokończ bieżący krok, **zatrzymaj się na granicy fazy** i powiedz
-użytkownikowi, że czas zamknąć sesję — z jednozdaniowym uzasadnieniem, które z sygnałów zadziałał.
-Nie przerywaj w środku kroku i nie rozstrzygaj sam, czy to `/clear`, `/handoff` czy `/compact`:
-to wybór człowieka (drzewo w `ask-matt/PHASE-BOUNDARIES.md`).
-
-Na granicy fazy jedno z dwóch: `/compact` (streszczenie, ten sam task — traci szczegóły) albo
-**New Task + handoff** (czysty kontekst — zachowuje to, co zapiszesz). Handoff to pięć linii: co
-zrobione, co zostało, gdzie leży plan, jaki jest następny krok, czego nie ruszać. Nie compactuj
-w środku kroku i nie przenoś sesji „na chwilę” — przeniesienie kosztuje więcej niż dokończenie.
-
-## Czego nie robić
-
-- Nie wypisuj całej mapy skilli — od tego jest `/ask-matt`.
-- Nie zaczynaj kroku bez potwierdzenia, nawet gdy rekomendacja jest oczywista.
-- Nie proponuj kroku, którego artefakt już istnieje (np. `/to-spec`, gdy spec leży w repo).
-- Nie mieszaj „poza zakresem” z „do zrobienia później”: pierwsze idzie do ledgera, drugie do
-  zgłoszeń.
-
 ## Wersja Kilo
 
 Skille wywołujesz jak komendy (`/grilling`, `/to-spec`). Granice faz: **New Task** = czysty

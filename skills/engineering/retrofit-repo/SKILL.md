@@ -91,15 +91,12 @@ Szablon biletu:
 
 `Status: needs-triage`, nie `ready-for-agent`: to użytkownik decyduje, co wchodzi w tej kolejności.
 
-## 4. Granica sesji
+## 4. Rozmiar audytu
 
 Audyt jest duży: jeśli konfiguracja, instrukcje i wiki nie mieszczą się w jednym przebiegu, podziel go
 na dwa (konfiguracja i instrukcje, potem wiki i kolejki) i zapisz wynik pierwszego w `plan.md`, żeby
-drugi nie zaczynał od zera.
-
-Budżetem nie rządzisz liczbą — nie znasz swojego zużycia tokenów. Sygnały, po których poznasz, że czas
-zamykać, i wybór między `/clear`, `/handoff` i `/compact` opisuje `ask-matt/SKILL.md` (Budżet
-kontekstu) oraz `ask-matt/PHASE-BOUNDARIES.md`.
+drugi nie zaczynał od zera. Decyzję o granicy sesji podejmuje `ask-matt/PHASE-BOUNDARIES.md`, a gdy
+nie wiesz, gdzie jesteś — `/granica`.
 
 ## 5. Raport
 
