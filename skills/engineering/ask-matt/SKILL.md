@@ -53,6 +53,8 @@ A starting situation that generates work, then merges onto the main flow.
 
   When the map clears, **it hands off, it doesn't build**: merge onto the main flow at **`/to-spec`**, which collapses the map's linked decisions into a buildable plan, then `/to-tickets` and `/implement` as usual. Looping the map straight into `/implement` skips that collapse and throws the linked detail away, so go straight to `/implement` only when the effort turned out genuinely small.
 
+**Existing repo that never adopted this setup** → `/retrofit-repo`: audit, plan, and one ticket per batch, so each batch fits a single context window.
+
 ## Codebase health
 
 Not feature work, just upkeep.
@@ -91,6 +93,28 @@ Off the main flow entirely.
 - **`/wait-what`** is the corrective for a message that didn't land. Use it mid-conversation, inside any other skill, and the agent re-pitches what it just said with the context you were missing, in plain English, using the `GLOSSARY.md` vocabulary. It works after the fact; `/grill-with-docs` is the upfront cure, because a shared language agreed early is what stops the jargon arriving at all.
 - **`/teach`**: learn a concept over multiple sessions, using the current directory as a stateful workspace.
 - **`/writing-for-agents`** is the reference for writing documents agents consume: skills, AGENTS.md, pointed-at docs.
+
+
+## Budżet kontekstu
+
+Sesja ma skończyć się **przed** wyczerpaniem okna, nie po. Cel: 110–130k tokenów na sesję, twardy
+sufit 150–180k. Sprawdzaj zużycie na granicy każdego kroku, nie w jego środku:
+
+| Zużycie | % okna 200k | Decyzja |
+|---|---|---|
+| do ~80k | < 40% | następny krok bez ograniczeń |
+| 80–120k | 40–60% | dokończ bieżący krok i **zamknij na granicy fazy** |
+| 120–150k | 60–75% | nie zaczynaj nowego kroku: zapisz handoff i zakończ |
+| > 150k | > 75% | tylko handoff w pięciu liniach, potem stop |
+
+Jeśli harness nie pokazuje zużycia tokenów, użyj proxy i oceniaj ostrożnie: **liczba tur** (ponad 25
+to koniec fazy), liczba wczytanych dużych plików (ponad 15), rozmiar diffu, liczba wywołań narzędzi
+w jednej turze. Lepiej zamknąć sesję o 10% za wcześnie niż urwać ją w połowie kroku.
+
+Na granicy fazy wybierz jedno: `/compact` (streszczenie, ten sam task — traci szczegóły) albo
+**New Task + handoff** (czysty kontekst — zachowuje to, co zapiszesz). Handoff to pięć linii: co
+zrobione, co zostało, gdzie leży plan, jaki jest następny krok, czego nie ruszać. Nie compactuj
+w środku kroku i nie przenoś sesji „na chwilę” — przeniesienie kosztuje więcej niż dokończenie.
 
 ## Precondition
 

@@ -52,6 +52,28 @@ Od góry, pierwsze trafienie wygrywa:
 
 Trzy opcje to maksimum. Skończ pytaniem **„idziemy w to?”** i czekaj na odpowiedź.
 
+
+## Budżet kontekstu
+
+Sesja ma skończyć się **przed** wyczerpaniem okna, nie po. Cel: 110–130k tokenów na sesję, twardy
+sufit 150–180k. Sprawdzaj zużycie na granicy każdego kroku, nie w jego środku:
+
+| Zużycie | % okna 200k | Decyzja |
+|---|---|---|
+| do ~80k | < 40% | następny krok bez ograniczeń |
+| 80–120k | 40–60% | dokończ bieżący krok i **zamknij na granicy fazy** |
+| 120–150k | 60–75% | nie zaczynaj nowego kroku: zapisz handoff i zakończ |
+| > 150k | > 75% | tylko handoff w pięciu liniach, potem stop |
+
+Jeśli harness nie pokazuje zużycia tokenów, użyj proxy i oceniaj ostrożnie: **liczba tur** (ponad 25
+to koniec fazy), liczba wczytanych dużych plików (ponad 15), rozmiar diffu, liczba wywołań narzędzi
+w jednej turze. Lepiej zamknąć sesję o 10% za wcześnie niż urwać ją w połowie kroku.
+
+Na granicy fazy wybierz jedno: `/compact` (streszczenie, ten sam task — traci szczegóły) albo
+**New Task + handoff** (czysty kontekst — zachowuje to, co zapiszesz). Handoff to pięć linii: co
+zrobione, co zostało, gdzie leży plan, jaki jest następny krok, czego nie ruszać. Nie compactuj
+w środku kroku i nie przenoś sesji „na chwilę” — przeniesienie kosztuje więcej niż dokończenie.
+
 ## Czego nie robić
 
 - Nie wypisuj całej mapy skilli — od tego jest `/ask-matt`.

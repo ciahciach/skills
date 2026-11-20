@@ -38,28 +38,30 @@ dated process record, so it lives beside `milestones.md`. Paths and frontmatter:
 
 ## Where the questions go
 
-A harness may offer an interactive question prompt (Kilo's `question` tool, a UI with selectable
-options). When it exists, use it **for the questions of the round** instead of duplicating them as
-prose: one prompt per question, with your recommendation as the first option. Still ask one round at
-a time, and still wait for the answers before recomputing the frontier. Do not write `Q1 / Q2 / Q3`
-in the message and then also fire the prompt: that is the same question twice.
+**In the message, as text.** Numbered, each followed by your recommended answer. Never through the
+harness's interactive question prompt, even when it is offered:
 
-Without such a tool, fall back to the numbered round: each question numbered, followed by `➡️` and
-your recommended answer, all in one message, then wait.
+- Those prompts are capped per session (Kilo allows a handful), so an interview dies at the third
+  question — exactly when it starts to get useful.
+- A prompt collapses a question into options, so the user picks one instead of telling you what they
+  actually know. The reasons are the material you came for.
+- A prompt ends the turn and waits on a UI click; text lets the user answer three questions in one
+  message, half-answer the fourth, and correct a term on the way.
+
+Use the `❓ **Q1**` template above, each question followed by `➡️` and your recommended answer. Ask
+one round, then wait. If the answer arrives as a normal message — partial, out of order, with a
+correction — take what you got, recompute the frontier, and ask the next round the same way.
 
 ## Waiting on an answer
 
-Ask the round through the interactive question prompt when the harness has one, then **wait without a
-deadline**. A closed, dismissed, or timed-out card is **not** an answer:
+Wait without a deadline. Silence is **not** an answer:
 
-- Never treat silence, a closed prompt, or a timeout as agreement with your recommendation.
+- Never treat no reply, a closed prompt, or a timeout as agreement with your recommendation.
 - Never continue "with the defaults" because a question did not come back.
-- If a card closes with no response, say so in one line, re-ask the same question once, and if it
-  closes again, restate the round as plain numbered questions in the message and wait there.
+- If a round gets no reply, say so in one line and re-ask the **same** round once, not a shorter one.
+  Do not shorten the round to make it more likely to be answered: the frontier is the point.
 - Do not end the turn to "let the user come back to it later" — that ends the interview with the
   decision unmade.
-- Do not shorten the round to a single question to reduce the chance of losing it: ask the whole
-  frontier, then wait.
 
 The frontier stays open until the user answers it or explicitly parks it. Parking is a decision the
 user states, not one you infer.
