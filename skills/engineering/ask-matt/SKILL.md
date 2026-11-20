@@ -116,6 +116,8 @@ Na granicy fazy wybierz jedno: `/compact` (streszczenie, ten sam task — traci 
 zrobione, co zostało, gdzie leży plan, jaki jest następny krok, czego nie ruszać. Nie compactuj
 w środku kroku i nie przenoś sesji „na chwilę” — przeniesienie kosztuje więcej niż dokończenie.
 
+**Several independent tickets, and you want them done in one night** → `/implement-wave`: parallel subagents over disjoint file sets, parent commits per ticket.
+
 ## Precondition
 
 **`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels, and doc layout the other skills assume. Custom issue trackers also work.
