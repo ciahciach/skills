@@ -146,3 +146,43 @@ The engineering skills own *when* a page is written:
 
 Lint after a batch of these, not during: run `llm-wiki`'s lint once at the end, so `index.md` and
 `log.md` reflect the finished batch instead of every intermediate write.
+
+## Decisions register: keep the shape the repo has
+
+New decisions are files under `wiki/decisions/NNNN-<slug>.md`. A repo that already keeps a single
+register (`wiki/decisions.md`) keeps it — it becomes the index, not a casualty of tidying:
+
+- Do not rename or move it. Links point at it from the repo and from outside it.
+- Do not split its history in the setup run. Split one decision when that decision is next touched.
+- The index carries the table of ADRs; the ADRs carry the reasoning.
+- `docs/adr/` is never created in wiki mode.
+
+An index entry without an ADR file behind it is a bug: the decision exists only as a line someone
+will later misquote.
+
+## Minimum bootstrap, and nothing more
+
+When wiki mode is turned on for a repo that has no wiki, create exactly:
+
+| File | Why |
+|---|---|
+| `wiki/index.md` | the one entry point every skill reads first |
+| `wiki/decisions/` | where ADRs land; empty until the first real decision |
+| `wiki/processes/grill/` | where interview ledgers land |
+| `wiki/processes/governance.md` | the rules for editing pages: status, `last_verified`, provenance |
+
+Do not invent component pages, glossaries or backlogs. A wiki that starts as a graveyard of empty
+templates is abandoned in a month; one that starts with an index and three folders grows.
+
+## Two queues, two scopes
+
+`.scratch/` holds work items these skills drive — specs, tickets, grill ledgers when there is no
+wiki. `wiki/` holds knowledge — decisions, components, processes, milestones. The same ticket never
+lives in both: the wiki links to the tracker, the tracker links to the wiki. When a repo already has
+a backlog in the wiki, say out loud which queue it belongs to instead of migrating it.
+
+## Editing an instruction file (AGENTS.md / CLAUDE.md)
+
+Append at the end under a new heading, in the file's own language; never reorder existing sections,
+never rewrite a `USER_CONFIRMED` line. Idempotent by heading: two runs leave one `## Agent skills`
+and one `## Wiki`. The file is governance, not a scratchpad.

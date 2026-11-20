@@ -62,20 +62,51 @@ The defaults are the five canonical roles, each label string equal to its name: 
 
 Offer **multi-context** (a root `GLOSSARY-MAP.md` pointing to per-context `GLOSSARY.md` files) only when exploration found monorepo signals. Then confirm which layout they want.
 
-**Section D: Wiki mode.** Ask only when the repo has `wiki/` or `wiki/index.md`; skip it entirely otherwise.
+**Section D: Wiki mode.** Ask in every repo, including one with no `wiki/` yet — an LLM wiki is
+cheap to start and expensive to retrofit.
 
-> Does this repo keep its knowledge in an LLM wiki? (recommended: **yes if `wiki/index.md` exists**)
+> Does this repo keep its knowledge in an LLM wiki? (recommended: **yes** when `wiki/index.md`
+> exists, **bootstrap it** when the repo has neither `wiki/` nor `docs/adr/`, **no** otherwise)
 
-On **yes**, the ADR path in `docs/agents/domain.md` becomes `wiki/decisions/` and the interview ledger
-becomes `wiki/processes/grill/<slug>.md`; `GLOSSARY.md` stays at the repo root because an agent reads
-it in one call. The full mapping, the merged frontmatter and the idempotent bootstrap live in
-`wiki-layout.md` in this skill's directory: read it before writing. Record the choice under a
-`## Wiki mode` heading in `docs/agents/domain.md` and mention it in the `### Domain docs` line of the
-`## Agent skills` block.
+Three answers, not two:
 
-Two rules matter more than the paths: **one artifact, one home** (a decision that exists in both
-`docs/adr/` and `wiki/decisions/` will drift apart within a week), and **`last_verified` moves only
-after a real re-check**, never on a typo edit and never because a commit exists.
+- **Yes, exists** — read `wiki/index.md` and record the paths that are really there.
+- **Yes, bootstrap** — create the minimum: `wiki/index.md`, `wiki/decisions/`,
+  `wiki/processes/grill/`, `wiki/processes/governance.md`. Nothing else: an empty page nobody
+  maintains is worse than no page, and a wiki that starts as a graveyard is abandoned in a month.
+- **No** — ADRs go to `docs/adr/`, ledgers to `docs/agents/grill/`, and no `## Wiki` block is written.
+
+On **yes** (either flavour), the ADR path in `docs/agents/domain.md` becomes `wiki/decisions/`, the
+interview ledger becomes `wiki/processes/grill/<slug>.md`, and `GLOSSARY.md` stays at the repo root
+because an agent reads it in one call. The full mapping, the merged frontmatter and the idempotent
+bootstrap live in `wiki-layout.md` in this skill's directory: read it before writing.
+
+**The decisions register has one shape, and setup must respect the one the repo already has.**
+
+- New decisions are files: `wiki/decisions/NNNN-<slug>.md`.
+- If a single-file register already exists (`wiki/decisions.md`, `docs/decisions.md`), it becomes the
+  **index**: link the new ADRs from it, leave its history in place. Do not rename it, do not move it,
+  and do not split its old content in this run — a rename breaks links across the repo and in whatever
+  points at it from outside.
+- Splitting an old register entry into its own ADR happens one decision at a time, when that decision
+  is next touched. Until then the index points at the section instead of copying it.
+- `docs/adr/` is never created in wiki mode, and one decision never lives in two places.
+
+Three rules matter more than the paths: **one artifact, one home** (a decision that exists in both
+`docs/adr/` and `wiki/decisions/` will drift apart within a week), **`last_verified` moves only after
+a real re-check** (never on a typo edit, never because a commit exists), and **two queues with two
+scopes** — `.scratch/` for the work items these skills drive, `wiki/` for the repo's knowledge. The
+same ticket never lives in both: the wiki links to the tracker, the tracker links to the wiki.
+
+**Section E: Repo rules worth recording.** Two lines that cost nothing now and save a mess later.
+Write them into the `## Wiki` block only when wiki mode is on, and phrase them in the repo's language:
+
+- **Configuration is not a milestone.** Tooling setup goes to `CHANGELOG.md` if the repo has one; it
+  does not consume a milestone number, because numbers are for work whose outcome someone can verify.
+  Never renumber milestones that are already written down — leave the gap and apply the rule from now on.
+- **Facts carry provenance.** Wherever the repo writes observations, use the vocabulary it already
+  has. If it has none, propose `USER_CONFIRMED / OBSERVED / INFERRED / PROPOSED` rather than
+  inventing a ranking like `confidence: high` that no one can check against anything.
 
 ### 3. Confirm and edit
 
@@ -98,6 +129,16 @@ Never create `AGENTS.md` when `CLAUDE.md` already exists (or vice versa); always
 
 If an `## Agent skills` block already exists in the chosen file, update its contents in-place rather than appending a duplicate. Don't overwrite user edits to the surrounding sections.
 
+Editing an existing instruction file is surgery, not a rewrite:
+
+- **Append, never reorder.** The file is a governance document; its existing sections may carry rules
+  you cannot see the reason for. New blocks go at the end under their own heading.
+- **Match the file's language**, including headings. A Polish repo gets `## Wiki`, not `## Wiki (LLM wiki)`
+  bolted onto English prose.
+- **Idempotent by heading.** Two runs must leave one `## Agent skills` and one `## Wiki`, not four.
+- If the file has `USER_CONFIRMED` markers or similar, treat them as immutable: your block is a new
+  section, not an edit to their decisions.
+
 The block:
 
 ```markdown
@@ -116,6 +157,22 @@ The block:
 [one-line summary of layout: "single-context" or "multi-context"]. See `docs/agents/domain.md`.
 ```
 
+That is one section. When Section D said yes, write a **second, separate** section at the end of the
+file — two headings, not one merged block:
+
+```markdown
+## Wiki
+
+- Knowledge lives in `wiki/`; start from `wiki/index.md`.
+- Artifact locations and reading rules: `docs/agents/domain.md`.
+- Maintenance and verification rules: `wiki/processes/governance.md`.
+- [one line: two queues — tracker for work items, wiki for knowledge]
+- [one line: configuration is not a milestone]
+```
+
+The two bracketed lines come from Section E; fill them in the repo's language, or drop them when the
+repo has neither milestones nor a second backlog to disambiguate.
+
 Include the `### Triage labels` sub-block, and write `docs/agents/triage-labels.md`, only when `triage` is installed and Section B ran. When it isn't, both are omitted.
 
 When Section B ran on GitHub or GitLab, create each configured label the tracker lacks (`gh label create` / `glab label create`).
@@ -133,3 +190,22 @@ For "other" issue trackers, write `docs/agents/issue-tracker.md` from scratch us
 ### 5. Done
 
 Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `docs/agents/*.md` directly later; re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
+
+Before you say it's done, prove it — read back what you wrote and report the result, not the intention:
+
+- `docs/agents/` holds the files you claim (list them).
+- The instruction file has exactly one `## Agent skills` block, and one `## Wiki` block when wiki mode
+  is on.
+- In wiki mode: `wiki/decisions/` exists, and the decisions index is either new or untouched apart
+  from the added links.
+- `git diff --check` passes. For brand-new files git has nothing to check, so run
+  `git diff --no-index --check -- NUL <file>` (or `/dev/null` on unix) on each one.
+- Report what you deliberately did **not** do: no commit, no renames, no binary or Excel-adjacent
+  files touched, no migration of existing wiki content.
+
+Configuring a repo is not a milestone. If the repo records milestones, say plainly that this run
+consumed none.
+
+<!-- next-step-pointer -->
+> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
+> and picks one), or state it yourself in one line with the exact command.

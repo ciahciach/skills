@@ -15,10 +15,10 @@ Użytkownik nie zna jeszcze kolejności skilli i pyta „co teraz?”. Twoim zad
 | ledger wywiadu | `wiki/processes/grill/*.md`, `docs/agents/grill/*.md`, `.scratch/grill/*.md` |
 | słownik pojęć | `GLOSSARY.md`, `docs/agents/domain.md` |
 | decyzje (ADR) | `wiki/decisions/`, `docs/adr/`, `docs/agents/decisions/` |
-| spec | `docs/agents/specs/*`, zgłoszenie z etykietą spec |
-| bilety | `docs/agents/tickets/*`, `.scratch/<feature>/issues/*`, tracker |
+| spec | `.scratch/<feature>/spec.md`, zgłoszenie z etykietą spec |
+| bilety | `.scratch/<feature>/issues/*`, tracker opisany w `docs/agents/issue-tracker.md` |
 | praca w toku | `git status`, `git diff --stat`, gałąź względem main |
-| zgłoszenia | tracker wskazany w `docs/agents/domain.md` |
+| konfiguracja | `docs/agents/` (brak = setup jeszcze nie był) |
 
 Nie zgaduj — otwórz katalogi i sprawdź, co realnie leży. Brak artefaktu to informacja, nie błąd.
 
@@ -26,6 +26,8 @@ Nie zgaduj — otwórz katalogi i sprawdź, co realnie leży. Brak artefaktu to 
 
 Od góry, pierwsze trafienie wygrywa:
 
+0. **Brak `docs/agents/`** → `/setup-matt-pocock-skills`. Reszta skilli czyta z tych plików tracker
+   i ścieżki; bez nich każdy kolejny krok zgaduje.
 1. **Jest pomysł, nie ma ledgera** → `/grill-with-docs`.
 2. **Jest ledger, brak słownika** → `/grill-with-docs` (dokończ nazwy). Nie `/to-spec` — spec bez
    nazw to zgadywanie.
