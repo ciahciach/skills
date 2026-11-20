@@ -35,3 +35,14 @@ When the repo keeps an LLM wiki (`wiki/index.md` exists), the decisions ledger g
 `wiki/processes/grill/<slug>.md` instead of `docs/agents/grill/` or `.scratch/grill/`. A ledger is a
 dated process record, so it lives beside `milestones.md`. Paths and frontmatter: `wiki-layout.md` in
 `setup-matt-pocock-skills`.
+
+## Where the questions go
+
+A harness may offer an interactive question prompt (Kilo's `question` tool, a UI with selectable
+options). When it exists, use it **for the questions of the round** instead of duplicating them as
+prose: one prompt per question, with your recommendation as the first option. Still ask one round at
+a time, and still wait for the answers before recomputing the frontier. Do not write `Q1 / Q2 / Q3`
+in the message and then also fire the prompt: that is the same question twice.
+
+Without such a tool, fall back to the numbered round: each question numbered, followed by `➡️` and
+your recommended answer, all in one message, then wait.
