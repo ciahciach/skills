@@ -110,3 +110,9 @@ Capture everything resolved during grilling under "established so far" so the wo
 ## Resuming a previous session
 
 If prior triage notes exist on the issue or PR, read them, check whether the reporter has answered any outstanding questions, and present an updated picture before continuing. Don't re-ask resolved questions.
+
+## Wiki mode
+
+When the repo keeps an LLM wiki and grilling resolves domain terms or decisions, write them to
+`wiki/decisions/` (and `GLOSSARY.md` for terms) rather than `docs/adr/`, then link from the ticket.
+The ticket stays the work item; the wiki stays the knowledge.

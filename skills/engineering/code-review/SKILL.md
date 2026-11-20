@@ -87,3 +87,11 @@ A change can pass one axis and fail the other:
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
 
 Reporting them separately stops one axis from masking the other.
+
+## Wiki mode
+
+When the repo keeps an LLM wiki, two sources move: the originating spec may live in the tracker with
+only a link in `wiki/index.md`, and **decisions recorded as ADRs live in `wiki/decisions/`**, not
+`docs/adr/`. Read the wiki decision pages that touch the changed files before judging the diff: a
+review that contradicts a recorded decision is either a bug in the code or a decision that needs
+superseding, and the report should say which.

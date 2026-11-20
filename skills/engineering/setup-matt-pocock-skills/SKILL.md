@@ -58,9 +58,24 @@ If it is installed, ask exactly one question:
 
 The defaults are the five canonical roles, each label string equal to its name: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. On **yes**, write them as-is. Only if the user says no, usually because their tracker already uses other names (e.g. `bug:triage` for `needs-triage`), collect the overrides so `triage` applies existing labels instead of creating duplicates.
 
-**Section C: Domain docs.** Default to **single-context** (one `GLOSSARY.md` + `docs/adr/` at the repo root). This fits almost every repo; write it without asking.
+**Section C: Domain docs.** Default to **single-context** (one `GLOSSARY.md` + `docs/adr/` at the repo root). This fits almost every repo; write it without asking. If Section D turns wiki mode on, the ADR half of that layout is `wiki/decisions/` — write that path, not `docs/adr/`.
 
 Offer **multi-context** (a root `GLOSSARY-MAP.md` pointing to per-context `GLOSSARY.md` files) only when exploration found monorepo signals. Then confirm which layout they want.
+
+**Section D: Wiki mode.** Ask only when the repo has `wiki/` or `wiki/index.md`; skip it entirely otherwise.
+
+> Does this repo keep its knowledge in an LLM wiki? (recommended: **yes if `wiki/index.md` exists**)
+
+On **yes**, the ADR path in `docs/agents/domain.md` becomes `wiki/decisions/` and the interview ledger
+becomes `wiki/processes/grill/<slug>.md`; `GLOSSARY.md` stays at the repo root because an agent reads
+it in one call. The full mapping, the merged frontmatter and the idempotent bootstrap live in
+`wiki-layout.md` in this skill's directory: read it before writing. Record the choice under a
+`## Wiki mode` heading in `docs/agents/domain.md` and mention it in the `### Domain docs` line of the
+`## Agent skills` block.
+
+Two rules matter more than the paths: **one artifact, one home** (a decision that exists in both
+`docs/adr/` and `wiki/decisions/` will drift apart within a week), and **`last_verified` moves only
+after a real re-check**, never on a typo edit and never because a commit exists.
 
 ### 3. Confirm and edit
 
@@ -118,18 +133,3 @@ For "other" issue trackers, write `docs/agents/issue-tracker.md` from scratch us
 ### 5. Done
 
 Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `docs/agents/*.md` directly later; re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
-
-## Wiki mode
-
-Ask about this section only when the repo has `wiki/` or `wiki/index.md`; skip it entirely otherwise.
-
-> Does this repo keep its knowledge in an LLM wiki? (recommended: **yes if `wiki/index.md` exists**)
-
-On **yes**, the skills stop writing to `docs/adr/` and `docs/agents/grill/` and write into the wiki;
-`GLOSSARY.md` stays at the repo root because an agent reads it in one call. The full mapping, the
-merged frontmatter and the idempotent bootstrap live in `wiki-layout.md` in this skill's directory:
-read it before writing. Record the choice under a `## Wiki mode` heading in `docs/agents/domain.md`.
-
-Two rules matter more than the paths: **one artifact, one home** (a decision that exists in both
-`docs/adr/` and `wiki/decisions/` will drift apart within a week), and **`last_verified` moves only
-after a real re-check**, never on a typo edit and never because a commit exists.

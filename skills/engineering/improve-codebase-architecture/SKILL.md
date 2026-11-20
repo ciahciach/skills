@@ -69,3 +69,10 @@ Side effects happen inline as decisions crystallize; call the Skill tool with "d
 - **Sharpening a fuzzy term during the conversation?** Update `GLOSSARY.md` right there.
 - **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing; skip ephemeral reasons ("not worth it right now") and self-evident ones.
 - **Want to explore alternative interfaces for the deepened module?** Call the Skill tool with "codebase-design" and use its design-it-twice parallel sub-agent pattern.
+
+## Wiki mode
+
+When the repo keeps an LLM wiki, ADRs live in `wiki/decisions/`, not `docs/adr/`, and the domain
+glossary is still `GLOSSARY.md` at the root (linked from `wiki/index.md`). Read the decision pages
+that touch the modules you are scanning before proposing a deepening: half of what looks like a
+missing seam is a decision already taken for a reason.
