@@ -108,3 +108,7 @@ In either form, avoid specific file paths or code snippets: they go stale fast. 
 
 Tickets stay in the tracker the repo declared. In a wiki repo the wiki gets a link and a `log.md`
 entry, never copies of ticket bodies: blocking edges and status live in one place, or they lie.
+
+<!-- next-step-pointer -->
+> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
+> and picks one), or state it yourself in one line with the exact command.

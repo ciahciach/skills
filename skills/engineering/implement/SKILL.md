@@ -22,3 +22,7 @@ Read `docs/agents/domain.md` before the first slice: it names the tracker and, w
 `## Wiki mode` section that moves interview ledgers to `wiki/processes/grill/` and ADRs to
 `wiki/decisions/`. Do not create `docs/adr/` in a wiki repo, and do not restate a decision that
 already has a page: link to it.
+
+<!-- next-step-pointer -->
+> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
+> and picks one), or state it yourself in one line with the exact command.

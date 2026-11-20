@@ -46,3 +46,24 @@ in the message and then also fire the prompt: that is the same question twice.
 
 Without such a tool, fall back to the numbered round: each question numbered, followed by `➡️` and
 your recommended answer, all in one message, then wait.
+
+## Waiting on an answer
+
+Ask the round through the interactive question prompt when the harness has one, then **wait without a
+deadline**. A closed, dismissed, or timed-out card is **not** an answer:
+
+- Never treat silence, a closed prompt, or a timeout as agreement with your recommendation.
+- Never continue "with the defaults" because a question did not come back.
+- If a card closes with no response, say so in one line, re-ask the same question once, and if it
+  closes again, restate the round as plain numbered questions in the message and wait there.
+- Do not end the turn to "let the user come back to it later" — that ends the interview with the
+  decision unmade.
+- Do not shorten the round to a single question to reduce the chance of losing it: ask the whole
+  frontier, then wait.
+
+The frontier stays open until the user answers it or explicitly parks it. Parking is a decision the
+user states, not one you infer.
+
+<!-- next-step-pointer -->
+> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
+> and picks one), or state it yourself in one line with the exact command.

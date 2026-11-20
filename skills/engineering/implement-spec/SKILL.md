@@ -40,3 +40,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 8. If a draft PR exists, mark it ready for review. Otherwise, resolve each ticket the way the issue tracker closes work, and report the integration branch.
 
 9. Clean up all **implementer subagent** worktrees.
+
+<!-- next-step-pointer -->
+> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
+> and picks one), or state it yourself in one line with the exact command.
