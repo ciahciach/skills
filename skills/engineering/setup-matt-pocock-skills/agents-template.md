@@ -75,7 +75,28 @@ related_objects: []
 - Nie obchodź ochrony VBA/IRM i nie odtwarzaj skoroszytu, żeby zrobić drobną zmianę.
 - Rozróżniaj dowód: inspekcja pliku ≠ otwarcie ≠ kompilacja ≠ uruchomiony scenariusz.
 
-## 6. Wiki i wiedza
+## 6. Power Query: nazewnictwo i debugowalność (usuń, jeśli projekt nie używa PQ)
+
+- **Prefiks mówi, czym rzecz jest.** Jeden zestaw do końca projektu:
+  - `fx` — funkcja: `fxNormalizeCode`, `fxValidateBudget`
+  - `p` — parametr: `pDatabasePath`, `pSnapshotDate`
+  - `q` — zapytanie wynikowe, ładowane do modelu: `qBudgetRows`
+  - `src` — źródło/connector: `srcDatabaseWorkbook`
+  - `stg` — zapytanie pośrednie, nieładowane: `stgBudgetTyped`
+- Nazwy bez spacji i polskich znaków, CamelCase po prefiksie. Prefiks nie zmienia znaczenia w trakcie
+  projektu: gdy zapytanie zmienia rolę, zmienia się nazwa, a nie „dorabia” drugi prefiks.
+- **Jedno zapytanie = jeden krok logiki.** Nie zagnieżdżaj `let ... in` w wyrażeniu kroku. Edytor PQ
+  pokazuje kroki i podgląd wyniku każdego z nich; zagnieżdżony `let` zwija się do jednego kroku i ten
+  podgląd znika — nie da się podejrzeć wyniku pośredniego ani zawęzić miejsca błędu. Logikę wyciągnij
+  do osobnego zapytania `fx`/`stg` i wywołaj je po nazwie.
+- Wyjątek: prywatny helper użyty **raz**, w jednej linii, bez wartości do podejrzenia. Wtedy `let`
+  w środku jest tańszy niż osobne zapytanie — ale nigdy „dla porządku”.
+- Zapytanie pośrednie, którego nikt nie ładuje, ma wyłączone ładowanie i prefiks `stg`; inaczej model
+  puchnie od tabel, z których nikt nie korzysta.
+- Przy błędzie nazwij krok, w którym powstaje zły wynik, zamiast przepisywać całe zapytanie.
+  Kolejność diagnostyki: źródło → typy → filtr → agregacja.
+
+## 7. Wiki i wiedza
 
 - Zaczynaj od `wiki/index.md`. Jeden artefakt ma jedno miejsce; reszta linkuje, nie kopiuje.
 - Utrzymywane strony mają `status`, `last_updated`, `last_verified`, `verified_against_snapshot`,
@@ -89,7 +110,7 @@ related_objects: []
   (spec, tickety, wywiady), `wiki/` to wiedza projektu. Ten sam bilet nie istnieje w obu.
 - Bez wiki: ADR-y w `docs/adr/`, ledger wywiadu w `docs/agents/grill/`.
 
-## 7. Skille Matta w Kilo
+## 8. Skille Matta w Kilo
 
 - Setup uruchamia się **raz na repo**: `docs/agents/issue-tracker.md`, `triage-labels.md`,
   `domain.md`. Reszta skilli czyta z nich tracker i ścieżki — bez nich każdy krok zgaduje.
@@ -102,7 +123,7 @@ related_objects: []
 - Spec zostaje w trackerze, wiedza w wiki. Skill nie jest źródłem prawdy o projekcie — jest nim
   ten plik i `docs/agents/*`.
 
-## 8. Git i wersjonowanie
+## 9. Git i wersjonowanie
 
 - Po każdym zaakceptowanym kawałku pracy: `git status` i commit z opisem **co i dlaczego**.
   Nie zostawiaj brudnego drzewa na koniec rundy.
@@ -114,7 +135,7 @@ related_objects: []
 - Podział odpowiedzialności: `CHANGELOG.md` = co się zmieniło i dlaczego, `wiki/decisions/` =
   dlaczego tak zdecydowano, tracker = co jeszcze zostało, commit = niepodzielna całość.
 
-## 9. Etapy (opcjonalne — usuń, jeśli repo ich nie ma)
+## 10. Etapy (opcjonalne — usuń, jeśli repo ich nie ma)
 
 - Etap to **widok**, nie licznik zadań. Jeśli repo prowadzi etapy, nazywaj je nazwą i datą;
   numer jest dopuszczalny tylko jako trwały identyfikator historyczny.
@@ -123,7 +144,7 @@ related_objects: []
   ich ograniczeniami, diffem i atomowym commitem.
 - Domyślnie **nie twórz** etapów: spec + bilety + ADR + CHANGELOG pokrywają to samo bez dryfu.
 
-## 10. Kopie i retencja
+## 11. Kopie i retencja
 
 - Vault/backup to magazyn kopii, nie drugie repo i nie źródło kodu.
 - Trzymaj jeden niezmienny baseline, ostatnie zatwierdzone checkpointy i ostatnie nieudane
