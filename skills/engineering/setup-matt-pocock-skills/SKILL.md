@@ -113,6 +113,8 @@ Write them into the `## Wiki` block only when wiki mode is on, and phrase them i
 Show the user a draft of:
 
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
+- When a new instruction file is being created: the whole filled `agents-template.md`, with the
+  sections that don't apply already removed, not just the block
 - The contents of `docs/agents/issue-tracker.md`, `docs/agents/domain.md`, and `docs/agents/triage-labels.md` (the last only when `triage` is installed)
 
 Let them edit before writing.
@@ -124,6 +126,12 @@ Let them edit before writing.
 - If `CLAUDE.md` exists, edit it.
 - Else if `AGENTS.md` exists, edit it.
 - If neither exists, ask the user which one to create; don't pick for them.
+- When the user chose to create one, start from `agents-template.md` in this skill's directory.
+  It covers what these skills expect (tracker, wiki, provenance, git discipline) plus the generic
+  rules a repo needs and no skill owns: autonomy limits, safe text editing, change boundaries,
+  versioning, and what a spreadsheet-heavy repo must not do. Fill in the `<...>` placeholders,
+  **delete the sections that don't apply**, and append the `## Agent skills` / `## Wiki` blocks.
+  Never ship the template with placeholders: a dead section reads as a requirement.
 
 Never create `AGENTS.md` when `CLAUDE.md` already exists (or vice versa); always edit the one that's already there.
 
