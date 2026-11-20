@@ -103,3 +103,8 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 </issue-template>
 
 In either form, avoid specific file paths or code snippets: they go stale fast. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it and note briefly that it came from a prototype. Trim to the decision-rich parts, not a working demo, just the important bits.
+
+## Wiki mode
+
+Tickets stay in the tracker the repo declared. In a wiki repo the wiki gets a link and a `log.md`
+entry, never copies of ticket bodies: blocking edges and status live in one place, or they lie.

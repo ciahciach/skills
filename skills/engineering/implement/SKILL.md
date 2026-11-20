@@ -15,3 +15,10 @@ Run typechecking regularly, single test files regularly, and the full test suite
 Once done, call the Skill tool with "code-review" to review the work.
 
 Commit your work to the current branch.
+
+## Wiki mode
+
+Read `docs/agents/domain.md` before the first slice: it names the tracker and, when present, the
+`## Wiki mode` section that moves interview ledgers to `wiki/processes/grill/` and ADRs to
+`wiki/decisions/`. Do not create `docs/adr/` in a wiki repo, and do not restate a decision that
+already has a page: link to it.

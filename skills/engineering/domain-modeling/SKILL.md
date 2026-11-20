@@ -72,3 +72,14 @@ Only offer to create an ADR when all three are true:
 3. **The result of a real trade-off**: there were genuine alternatives and you picked one for specific reasons
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
+
+## Wiki mode
+
+When the repo keeps an LLM wiki (`wiki/index.md` or `wiki/SCHEMA.md` exists), ADRs go to
+`wiki/decisions/NNNN-<slug>.md` instead of `docs/adr/`, carrying the merged frontmatter from
+`wiki-layout.md`. `GLOSSARY.md` and `GLOSSARY-MAP.md` stay at the repo root: an agent reads a
+glossary in one call, while a page inside a graph costs an index read before every use. Link the
+glossary from `wiki/index.md` so humans still find it.
+
+Mark facts on any page you write as USER_CONFIRMED, OBSERVED, INFERRED or PROPOSED, and move
+`last_verified` only after a real re-check against `verified_against_snapshot`.

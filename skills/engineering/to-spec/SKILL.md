@@ -73,3 +73,9 @@ A description of the things that are out of scope for this spec.
 Any further notes about the feature.
 
 </spec-template>
+
+## Wiki mode
+
+The spec is published to the tracker. When the repo has a wiki, add one line to `wiki/index.md`
+pointing at it plus a `log.md` entry: do not paste the spec body into a wiki page. Two copies of a
+spec drift within a week, and the tracker copy is the one tickets are cut from.
