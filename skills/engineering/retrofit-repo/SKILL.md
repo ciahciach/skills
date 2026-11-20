@@ -91,18 +91,15 @@ Szablon biletu:
 
 `Status: needs-triage`, nie `ready-for-agent`: to użytkownik decyduje, co wchodzi w tej kolejności.
 
-## 4. Budżet kontekstu
+## 4. Granica sesji
 
-Ten skill sam podlega limitowi: audyt zamknij w ~60k. Jeśli audit się nie mieści, podziel go na dwa
-przebiegi (konfiguracja i instrukcje, potem wiki i kolejki) i zapisz wynik pierwszego w `plan.md`,
-żeby drugi nie zaczynał od zera.
+Audyt jest duży: jeśli konfiguracja, instrukcje i wiki nie mieszczą się w jednym przebiegu, podziel go
+na dwa (konfiguracja i instrukcje, potem wiki i kolejki) i zapisz wynik pierwszego w `plan.md`, żeby
+drugi nie zaczynał od zera.
 
-| Zużycie | Decyzja |
-|---|---|
-| do ~80k | audyt albo planowanie bez ograniczeń |
-| 80–120k | dokończ bieżącą fazę, potem zamknij |
-| 120–150k | nie zaczynaj fazy: handoff i stop |
-| > 150k | tylko handoff w pięciu liniach |
+Budżetem nie rządzisz liczbą — nie znasz swojego zużycia tokenów. Sygnały, po których poznasz, że czas
+zamykać, i wybór między `/clear`, `/handoff` i `/compact` opisuje `ask-matt/SKILL.md` (Budżet
+kontekstu) oraz `ask-matt/PHASE-BOUNDARIES.md`.
 
 ## 5. Raport
 
