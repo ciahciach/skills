@@ -1,7 +1,7 @@
 ---
 name: spawn
 description: "Deleguj prace do nowej sesji worktree (spawn)."
-version: 1.2.0
+version: 1.3.0
 author: "ciahciach"
 license: MIT
 platforms: [linux, macos, windows]
@@ -183,6 +183,34 @@ Trzy elementy: link do issue (albo ścieżka handoffu), jedno zdanie zakresu, od
 `AGENTS.md`. Zakazane w prompcie: treść ticketu, rytuał końcowy (push, `/pr`, STOP), listy
 granic. Wszystko to jest już w `AGENTS.md` i w issue — powielone rozjeżdża się przy pierwszej
 zmianie pliku.
+
+## Po decyzji: tickety i spawn frontieru
+
+Decyzja człowieka jest **wejściem**, nie wyjściem. Gdy ją dostaniesz:
+
+1. Zapisz C3 — komentarz z linkiem do wypowiedzi człowieka i wybranym wariantem.
+2. Jeśli decyzja zmienia kontrakt, zapisz nowy ADR (nowy plik; nie edytuj istniejącego).
+3. Rozbij zakres na tickety. Każde dziecko z własnym „Dowodem PASS" i granicami.
+   Rodzic zostaje ticketem śledzącym, bez etykiety `ready-for-agent`.
+4. Ustaw blokady **natywnie** (`--blocked-by`, `--parent`), nigdy w prozie.
+5. Spawnuj **wyłącznie frontier** — tickety z zerem otwartych blokerów. Spawn zależnego
+   ticketu to robota na wyrok: agent nie zna wyniku poprzednika i wymyśli go.
+6. Zakończ turę raportem: co utworzone, co odpalone, co czeka na czyj wynik.
+
+Frontier sprawdzasz zawsze tym samym zapytaniem:
+
+```bash
+gh api "repos/$R/issues?state=open&per_page=100" --paginate --jq '
+  [.[]|select(.pull_request==null)]|.[]|
+  select((.issue_dependencies_summary.blocked_by//0)==0)
+  |select([.labels[].name]|index("ready-for-agent"))
+  |"#\(.number)\t\(.title)"'
+```
+
+Taka sama kolejność jest u Matta: `to-tickets` tnie spec na graf z blokadami, a
+`implement-spec` bierze z tego grafu **frontier** i uruchamia po jednym subagencie na
+ticket. Różnica, którą trzeba świadomie zaakceptować: on tnie spec osobnym krokiem,
+Ty możesz ciąć bezpośrednio z decyzji — pod warunkiem, że blokady są natywne.
 
 ## Handoff → spawn
 
