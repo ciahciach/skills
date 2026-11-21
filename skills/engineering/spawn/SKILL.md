@@ -1,7 +1,7 @@
 ---
 name: spawn
 description: "Deleguj prace do nowej sesji worktree (spawn)."
-version: 1.1.0
+version: 1.2.0
 author: "ciahciach"
 license: MIT
 platforms: [linux, macos, windows]
@@ -17,6 +17,28 @@ metadata:
 # Spawn
 
 Jedyne źródło prawdy o tym, **jak** oddelegować pracę. `AGENTS.md` mówi *kiedy*.
+
+## Wywołanie
+
+`/spawn <payload>` — argument to **reszta wiadomości** po nazwie skilla. Nie ma tu
+`$ARGUMENTS` ani szablonu (to mechanizm plików komend, nie skilli): skill dostaje tekst
+jako kontekst i sam z niego buduje nazwę, branch i prompt.
+
+```
+/spawn /wayfinder ułóż mapę skilli w repo ciahciach/skills
+/spawn /implement https://github.com/<org>/<repo>/issues/43
+```
+
+Nazwę i branch wyprowadź z payloadu: token bez wiodącego `/` wersalikami + ` · ` + 3–5 słów
+reszty (`WAYFINDER · ułoż mapę skilli`, branch `wayfinder/uloz-mape-skillow`).
+
+W spawnowanej sesji **nie licz na to, że wiodący `/` w prompcie zostanie sparsowany jako
+komenda**. Tool przekazuje prompt jako wiadomość, nie przez parser slashy. Pisz słownie:
+
+```
+Użyj skilla wayfinder. <reszta argumentu>
+```
+
 
 ## Test: delegować czy zrobić samemu
 
