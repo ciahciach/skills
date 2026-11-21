@@ -1,7 +1,7 @@
 ---
 name: spawn
 description: "Deleguj prace do nowej sesji worktree (spawn)."
-version: 1.0.0
+version: 1.1.0
 author: "ciahciach"
 license: MIT
 platforms: [linux, macos, windows]
@@ -16,161 +16,189 @@ metadata:
 
 # Spawn
 
-Ten skill jest jedynym źródłem prawdy o tym, **jak** oddelegować pracę do nowej sesji.
-`AGENTS.md` mówi *kiedy* — ten plik mówi *czym*.
+Jedyne źródło prawdy o tym, **jak** oddelegować pracę. `AGENTS.md` mówi *kiedy*.
 
 ## Test: delegować czy zrobić samemu
 
-Oddeleguj, gdy spełnione są **oba**:
+Oddeleguj, gdy spełnione są **oba**: praca potrzebuje izolacji (branch, checkout, diff, PR)
+i da się ją opisać jednym linkiem do issue albo jednym akapitem.
 
-- praca potrzebuje izolacji: nowy branch, osobny checkout, osobny diff, własny PR,
-- da się ją opisać jednym linkiem do issue albo jednym akapitem.
+Zrób sam, gdy: to jedno polecenie lub odczyt, zadanie dotyka plików, nad którymi siedzisz,
+albo wynik jest potrzebny w tej turze do decyzji.
 
-Zrób sam, gdy:
-
-- to jedno polecenie, jeden odczyt albo jedna poprawka w pliku, nad którym już siedzisz,
-- zadanie dotyka tych samych plików co Twoja bieżąca praca (kolizja w tym samym checkoutcie),
-- wynik jest potrzebny **teraz**, w tej turze, do podjęcia decyzji.
-
-Zasada z metodologii Matta: **jedna sesja = jeden ticket = jeden worktree = jeden PR.**
-Jeśli w normalnej pracy zrobiłbyś `stash` albo przełączył branch — to jest spawn.
+Reguła Matta: **jedna sesja = jeden ticket = jeden worktree = jeden PR.** Jeśli w normalnej
+pracy zrobiłbyś `stash` albo przełączył branch — to jest spawn.
 
 ## Mechanizm: narzędzie `agent_manager`
 
-Nie ma komendy do tworzenia sesji. Jest narzędzie `agent_manager`, wywoływane z sesji.
-Pierwsze użycie prosi o zgodę osobno dla `worktree`, `local` i `prompt` — to normalne.
+Dostępne **tylko w rozszerzeniu VS Code** (Agent Manager to funkcja rozszerzenia, nie CLI —
+CLI ma własne odpowiedniki, patrz niżej). Pierwsze użycie prosi o zgodę, osobno dla każdej
+zdolności.
 
 ```json
 agent_manager({
   "mode": "worktree",
-  "tasks": [
-    {
-      "name": "P03b · trwaly stan i hashe",
-      "branchName": "ticket/P03b-update-state",
-      "prompt": "Twoje issue: https://github.com/<org>/<repo>/issues/41. Pracuj wg AGENTS.md."
-    }
-  ]
+  "versions": false,
+  "tasks": [{
+    "name": "P03b · trwaly stan i hashe",
+    "branchName": "ticket/P03b-update-state",
+    "prompt": "Twoje issue: https://github.com/<org>/<repo>/issues/41. Pracuj wg AGENTS.md."
+  }]
 })
 ```
 
-Tryby:
+Tryby: `worktree` (nowy checkout, branch, katalog, terminal), `local` (sesja w bieżącym
+checkoutcie; można wskazać istniejący worktree przez `worktreeID`), `task` (subagent —
+**nie tworzy worktree**, wynik wraca do rodzica).
 
-| Tryb | Co robi | Kiedy |
-|---|---|---|
-| `worktree` | osobny checkout, branch, katalog, terminal | ticket, równoległy wątek, eksperyment |
-| `local` | nowa sesja w bieżącym checkoutcie | druga rozmowa na tym samym branchu, bez izolacji |
-| `task` (subagent) | dziecko w kontekście rodzica, wynik wraca | praca bez własnego brancha: research, analiza, czytanie |
+### Co naprawdę przyjmuje `tasks[]`
 
-Zarządzanie już uruchomionymi: `action: "list" | "prompt" | "stop" | "move" | "answer"`.
-`action: "answer"` służy do odpowiedzi sesji, która stoi na pytaniu.
+| Pole | Status |
+|---|---|
+| `name`, `branchName`, `prompt` | działają |
+| `model`, `provider`, `variant` | działają — model i reasoning per zadanie |
+| `agent`, `mode` | **nie działają** — zgłoszone w Kilo-Org/kilocode#13827, status `discussion` |
 
-## Nazewnictwo
+Sesja z promptem dziedziczy model i reasoning z bieżącej tury, chyba że podasz inny.
+Przed podmianą modelu sprawdź dostępne: narzędzie `agent_manager_models`.
 
-- `name`: `<ID> · <3–5 słów>` — ID na początku, bo `Ctrl+F` w panelu szuka po nazwie.
-- `branchName`: `ticket/<ID>-<slug>` — jawnie, nigdy nie zostawiaj autogenerowania.
-- Sesje dziedziczą model i reasoning z tury, w której powstały. Odpalaj spawn z sesji
-  ustawionej na model, którego chcesz w pracy.
+Skoro `agent`/`mode` nie przechodzą przez narzędzie, dwie drogi:
+
+- **ręcznie**: okno New Worktree obsługuje `/models`, `/agents`, `/variant`, `/sandbox` —
+  `/agents` wybiera tryb/agenta jeszcze przed startem,
+- **z CLI**: `kilo run --agent <nazwa>` albo `kilo worktree create`.
+
+Nie obchodź tego wstrzykiwaniem persony do promptu: zjada kontekst, kłóci się z instrukcjami
+bazowego agenta i nie daje scope'owania narzędzi.
+
+## Uprawnienia: każda zdolność osobno
+
+Zgoda jest rozdzielona per zdolność. Zatwierdzenie `worktree` **nie** zatwierdza `local`,
+przeglądu (`list`), promptu do istniejącej sesji, stopu, przeniesienia ani odpowiedzi.
+Prompt do istniejącej sesji wymaga własnej zgody `prompt`, nawet gdy tworzenie sesji
+zatwierdzono wcześniej zbiorczo.
+
+Odpowiedź na pytanie musi użyć **dokładnych etykiet opcji** z pytania. Zatwierdzenie planu
+może uruchomić implementację — czytaj, co zatwierdzasz.
+
+## Stany, kolejka i HITL
+
+- prompt do sesji zajętej albo w `retrying` trafia do kolejki; narzędzie wraca po przyjęciu,
+  nie po zakończeniu pracy,
+- sesja z **oczekującym pytaniem albo prośbą o uprawnienie odrzuca prompt** — najpierw
+  `action: "answer"` albo rozstrzygnięcie uprawnienia w panelu,
+- `action: "stop"` przerywa pracę i usuwa sesję z panelu, jak zamknięcie karty,
+- HITL zostaje i jest pożądany. Nie buduj „skrzynki pytań". Twoim obowiązkiem jest wyłapać
+  `waiting for input` przez `action: "list"` i powiedzieć o tym, nie udawać, że sesja pracuje.
+
+## Sekcje
+
+Wbrew temu, co sugeruje UI: **sekcje da się ustawiać programowo**. `action: "move"`
+przyjmuje ID sekcji z przeglądu albo `null`, żeby wyjąć z grupy. Przeniesienie sesji przenosi
+cały worktree razem z braćmi z trybu multi-version. **Sesji `local` nie da się przypisać do
+sekcji.**
+
+## Nazewnictwo i limity
+
+- `name`: `<ID> · <3–5 słów>`, ID na początku — `Ctrl+F` szuka po nazwie,
+- `branchName`: `ticket/<ID>-<slug>`, jawnie. Automatyczne nazywanie branchy jest domyślnie
+  włączone i nie zmienia nazw podanych wprost ani opublikowanych,
+- **20 zadań** na jedno żądanie, ale trzymaj **4 sesje worktree** — wąskim gardłem jest
+  Twoje review,
+- `versions: true` uruchamia do **4 równoległych wariantów** tego samego promptu (porównanie
+  podejść, nie zwiększanie przepustowości),
+- nie odpalaj dwóch sesji na tych samych plikach w jednym worktree — dzielą checkout, branch
+  i terminal.
+
+## Cykl życia worktree
+
+- worktree powstają w `.kilo/worktrees/`, stan panelu w `.kilo/agent-manager.json`,
+- **zamknięcie zarządzanego worktree usuwa katalog i lokalny branch** — pushuj przed
+  `Ctrl+Shift+W`,
+- nowe worktree twórz z **głównego repo**, nie z istniejącego checkoutu worktree,
+- `/update-from-base` zachowuje staged/unstaged/untracked w zweryfikowanej kopii odzyskania,
+  robi merge świeżej bazy i odtwarza zmiany; **nie używa `git stash`** i przerywa, gdy
+  konflikt wymaga decyzji. Przy „Push Pull Request Fixes" pushuje po czystym merge.
+
+## Setup i run script
+
+`.kilo/setup-script.ps1` (Windows; `setup-script`, `.sh`, `.cmd`, `.bat`) uruchamia się przy
+każdym nowym worktree, z `WORKTREE_PATH` i `REPO_PATH`, w **limicie 5 minut**. Kilo samo
+kopiuje tylko korzeniowe `.env` i `.env.*` — nic zagnieżdżonego, żadnych nadpisań.
+`.kilo/run-script.ps1` uruchamiasz `Ctrl+E` w wybranym worktree, z tymi samymi zmiennymi.
+
+## Wydajność: skąd 30 s na worktree
+
+Zmierzone w repo Versuni (1980 plików, binaria po 2–11 MB):
+
+| Etap | Czas |
+|---|---|
+| `git worktree add` (checkout 1980 plików) | **5,8 s** |
+| `git status --porcelain` | 0,7 s |
+| setup script | **brak pliku** — nie jest przyczyną |
+| reszta (~24 s) | inicjalizacja Kilo: snapshot, LSP, indeksowanie, boot sesji |
+
+Kolejność działania:
+
+1. **Zmierz drugie worktree pod rząd.** Jeśli jest wyraźnie szybsze, te 24 s to cold start
+   runtime'u, a nie koszt per worktree — wtedy nie ma czego optymalizować, trzeba tylko nie
+   zamykać panelu.
+2. **Wyklucz repo z real-time scan Defendera** — na Windows to zwykle największy zysk,
+   bo skanowany jest każdy z 1980 plików zapisanych przy checkoutcie.
+3. **Sparse checkout dla ticketów, które nie potrzebują binariów**:
+   `git worktree add --no-checkout <dir> -b <branch>` + `git sparse-checkout set tests tools wiki docs`.
+   Checkout spada z 1980 plików do setek.
+4. `.kilocodeignore` na `inventory/`, `src/formulas/`, `tests/proposals/`, `docs/*export*/`
+   — mniej plików do indeksowania.
+5. `git config feature.manyFiles true` — szybszy `git status` na dużych drzewach.
+
+Realnie 30 s → 8–10 s jest osiągalne. Parytetu 1 s nie będzie: u Matta nie ma snapshotu,
+LSP ani indeksowania na starcie.
 
 ## Prompt delegowany
 
-Trzy elementy i nic więcej:
-
-1. link do issue (albo ścieżka do handoffu),
-2. jedno zdanie zakresu, jeśli issue go nie zawiera,
-3. odesłanie do `AGENTS.md`.
-
-Zakazane w prompcie: powtarzanie treści ticketu, rytuału końcowego (push, `/pr`, STOP),
-listy granic i zakazów. Wszystko to jest już w `AGENTS.md` i w treści issue. Powielone
-w prompcie rozjeżdża się przy pierwszej zmianie w pliku.
-
-## Limity
-
-- maksymalnie **4 sesje worktree** równolegle; piąta czeka, aż któraś dojdzie do PR,
-- nie odpalaj dwóch sesji na tych samych plikach — to gwarantowany konflikt,
-- po spawnie **nie wykonuj tej pracy sam**: zaraportuj ID, nazwę i branch, wróć do swojego
-  zadania.
-
-## HITL zostaje
-
-Sesja worktree ma prawo stanąć i zapytać. To nie jest błąd, który trzeba obejść, i nie
-budujemy „skrzynki pytań" — człowiek chce odpowiadać na żywo. Twoim obowiązkiem jest
-tylko **wychwycić** stan `waiting for input` przy `action: "list"` i powiedzieć o tym,
-zamiast udawać, że sesja pracuje.
+Trzy elementy: link do issue (albo ścieżka handoffu), jedno zdanie zakresu, odesłanie do
+`AGENTS.md`. Zakazane w prompcie: treść ticketu, rytuał końcowy (push, `/pr`, STOP), listy
+granic. Wszystko to jest już w `AGENTS.md` i w issue — powielone rozjeżdża się przy pierwszej
+zmianie pliku.
 
 ## Handoff → spawn
 
-Gdy sesja kończy się z niedomkniętym zakresem:
-
-1. `/handoff` pisze dokument przekazania (skill `handoff-notes`),
-2. spawn nowej sesji z promptem wskazującym ten dokument:
-
-```
-agent_manager({ "mode": "worktree", "tasks": [{
-  "name": "<ID> · <zakres kontynuacji>",
-  "branchName": "ticket/<ID>-<slug>-c2",
-  "prompt": "Kontynuuj wg handoffu: <sciezka>. Zacznij od sekcji Suggested skills."
-}]})
-```
-
-Handoff trzymaj w trwałym miejscu (`%LOCALAPPDATA%\<projekt>-vault\handoffs\`), nie w `%TEMP%`
-— temp jest czyszczony i dokument przekazania przestaje istnieć dokładnie wtedy, gdy jest
-potrzebny.
+`/handoff` pisze dokument przekazania, potem spawn nowej sesji z promptem wskazującym ten
+dokument. Handoff trzymaj w trwałym miejscu (`%LOCALAPPDATA%\<projekt>-vault\handoffs\`),
+nie w `%TEMP%` — temp jest czyszczony dokładnie wtedy, gdy dokument jest potrzebny.
 
 ## Wayfinder: research równolegle
 
-Nie twórz komendy `wayfinder` — koliduje ze skillem o tej samej nazwie. Research z mapy
-odpalasz z sesji, która ma wczytany skill `wayfinder`, i to ona deleguje:
-
-```json
-agent_manager({ "mode": "worktree", "tasks": [
-  {"name": "D1 · research PageViews", "branchName": "wayfinder/D1-pageviews",
-   "prompt": "Rozstrzygnij pytanie z mapy <url>. Notatke zapisz poza repo: <vault>\\research\\D1.md. Nie zmieniaj kodu."},
-  {"name": "D2 · research LY/LQ", "branchName": "wayfinder/D2-lylq",
-   "prompt": "Rozstrzygnij pytanie z mapy <url>. Notatke zapisz poza repo: <vault>\\research\\D2.md. Nie zmieniaj kodu."}
-]})
-```
-
-Research nie potrzebuje PR-a: wynikiem jest notatka poza repo plus komentarz w issue.
+Nie twórz komendy `wayfinder` — koliduje ze skillem o tej samej nazwie. Deleguje sesja,
+która ma wczytany skill `wayfinder`, trybem `worktree` z branchem `wayfinder/<ID>-…`.
+Wynikiem researchu jest notatka poza repo plus komentarz w issue, nie PR.
 
 ## Kilo a Claude Code: co jest prymitywem
 
-Metoda Matta jest przenośna na poziomie artefaktów (spec, ticket, PR, `AGENTS.md`, ADR),
-ale nie na poziomie prymitywów. Poniżej różnica, żeby nie walczyć z narzędziem o funkcje,
-których nie ma:
+Metoda Matta jest przenośna na poziomie artefaktów (spec, ticket, PR, `AGENTS.md`, ADR), ale
+nie na poziomie prymitywów.
 
 | Prymityw | Claude Code | Kilo |
 |---|---|---|
-| zimna sesja na żądanie | natywna, ~1 s | `Ctrl+Shift+N`; pełne tworzenie worktree ~30 s |
-| spawn z poziomu agenta | narzędzie + subagenty | `agent_manager` (`worktree`/`local`/`task`) |
-| spawn z poziomu skryptu | `claude -p` | CLI `kilo run` (osobna instalacja, nie w rozszerzeniu) |
-| sesja jako obiekt | panel z listą i statusami | Agent Manager, ale **sekcje tylko ręczne**, brak auto-przypisania |
-| scope'owanie skilli | per katalog / subagent | jedna wspólna pula; odpowiednik = `kilo agent create --permissions` |
-| sygnał „needs input" | w panelu | tray tylko w aplikacji mobilnej |
-| podgląd stanu z zewnątrz | — | `kilo db`, `kilo export`, `kilo stats` |
+| spawn z poziomu agenta | narzędzie + subagenty | `agent_manager` (`worktree`/`local`) oraz `task` |
+| wiązanie roli z sesją | agent per subagent | **brak w narzędziu**; UI `/agents` albo CLI `--agent` |
+| spawn ze skryptu | `claude -p` | `kilo run` (osobna instalacja, nie w rozszerzeniu) |
+| sesja jako obiekt | panel z listami i statusami | Agent Manager; sekcje **da się** ustawiać przez `move` |
+| scope'owanie skilli | per katalog / agent | wspólna pula; odpowiednik = `kilo agent create --permissions` |
+| sygnał „needs input" | w panelu | tray w aplikacji mobilnej; w VS Code przez `list` |
+| obserwowalność z zewnątrz | — | `kilo db`, `kilo export`, `kilo stats` |
 
-Wniosek: Kilo nie odtwarza panelu Claude Code, ale daje **lepszą obserwowalność** (SQLite
-sesji, eksport transkryptu, statystyki kosztu) i równoważny spawn. Różnica, którą trzeba
-zaakceptować: sekcje układasz ręcznie, więc nośnikiem cyklu życia jest nazwa i branch,
-nie kolor.
-
-## Wydajność: worktree 30 s zamiast 1 s
-
-Samo `git worktree add` jest szybkie. Reszta to robota po utworzeniu. Zmierz po kolei:
-
-```powershell
-Measure-Command { git worktree add .kilo/worktrees/probe-1 -b probe-1 origin/main }
-Get-Content .kilo/setup-script.ps1        # instalacje? kopiowanie? timeout?
-```
-
-Kolejność podejrzeń: skrypt setup (instalacje i kopiowanie `.env`), inicjalizacja snapshotu,
-start LSP, indeksowanie drzewa (repo ma tysiące plików i binaria po kilka MB). Skrócenie:
-pusty albo minimalny setup-script, `.kilocodeignore` na `inventory/`, `src/formulas/`,
-`tests/proposals/`, `docs/*export*/`.
+Kilo nie odtwarza panelu Claude Code, ale daje lepszą obserwowalność (SQLite sesji, eksport
+transkryptu, statystyki kosztu) i równoważny spawn. Różnica do zaakceptowania: nośnikiem
+cyklu życia jest nazwa i branch, nie kolor sekcji.
 
 ## Anty-wzorce
 
 - spawn po to, żeby „mieć porządek" — pusta sesja kosztuje tyle samo co pracująca,
 - spawn zadania zależnego od wyniku bieżącej pracy — poczekaj, aż będzie frontier,
-- duplikowanie treści ticketu w prompcie,
+- wstrzykiwanie persony do promptu zamiast `/agents` albo `--agent`,
+- prompt do sesji, która stoi na pytaniu (zostanie odrzucony),
 - traktowanie `waiting for input` jako awarii,
+- zamykanie worktree przed pushem (ginie lokalny branch),
 - zostawianie sesji bez PR na noc — rano nie wiadomo, która jest którą.
