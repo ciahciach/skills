@@ -1,7 +1,7 @@
 ---
 name: spawn
 description: "Deleguj prace do nowej sesji worktree (spawn)."
-version: 1.3.0
+version: 1.4.0
 author: "ciahciach"
 license: MIT
 platforms: [linux, macos, windows]
@@ -73,25 +73,34 @@ Tryby: `worktree` (nowy checkout, branch, katalog, terminal), `local` (sesja w b
 checkoutcie; można wskazać istniejący worktree przez `worktreeID`), `task` (subagent —
 **nie tworzy worktree**, wynik wraca do rodzica).
 
-### Co naprawdę przyjmuje `tasks[]`
+### Co przyjmuje `tasks[]`
 
-| Pole | Status |
+| Pole | Znaczenie |
 |---|---|
-| `name`, `branchName`, `prompt` | działają |
-| `model`, `provider`, `variant` | działają — model i reasoning per zadanie |
-| `agent`, `mode` | **nie działają** — zgłoszone w Kilo-Org/kilocode#13827, status `discussion` |
+| `name`, `branchName`, `prompt` | nazwa karty, branch, pierwsza wiadomość |
+| `agent` | **działa** — nazwa agenta, jako który ruszy sesja; musi być agentem primary (`mode: "all"` albo `"primary"`), **nie** `subagent` i nie wewnętrzny/ukryty. Zła nazwa kończy żądanie bez startu sesji i zwraca listę dostępnych — czytaj ją, nie zgaduj |
+| `model`, `provider`, `variant` | działają; `variant` można podać bez `model`, żeby zmienić reasoning przy dziedziczonym modelu |
+| `baseBranch` | **działa w trybie worktree** — branch, od którego startuje nowe worktree (`main`, `release/1.0`, `wave/f1`). Nie łączy się z `worktreeID` ani z trybem `local` |
 
-Sesja z promptem dziedziczy model i reasoning z bieżącej tury, chyba że podasz inny.
-Przed podmianą modelu sprawdź dostępne: narzędzie `agent_manager_models`.
+Domyślnie **nie podawaj** `model`, `provider` ani `variant`: sesja z promptem dziedziczy model
+i reasoning bieżącej tury. Podmieniaj tylko wtedy, gdy użytkownik o to poprosi (albo chce
+porównać modele). Do wyszukania modeli służy `agent_manager_models`.
 
-Skoro `agent`/`mode` nie przechodzą przez narzędzie, dwie drogi:
+`baseBranch` to jedyny czysty sposób, żeby oprzeć całą falę o wspólny branch — bez tego
+każde worktree tnie od domyślnej bazy projektu.
 
-- **ręcznie**: okno New Worktree obsługuje `/models`, `/agents`, `/variant`, `/sandbox` —
-  `/agents` wybiera tryb/agenta jeszcze przed startem,
-- **z CLI**: `kilo run --agent <nazwa>` albo `kilo worktree create`.
+Nie obchodź braku dopasowania przez wstrzykiwanie persony do promptu: zjada kontekst, kłóci
+się z instrukcjami bazowego agenta i nie daje scope'owania narzędzi. Jeśli potrzebujesz
+wyspecjalizowanego performera — utwórz agenta z `mode: "all"` i podaj jego nazwę w `agent`.
 
-Nie obchodź tego wstrzykiwaniem persony do promptu: zjada kontekst, kłóci się z instrukcjami
-bazowego agenta i nie daje scope'owania narzędzi.
+### Czego narzędzie samo nie zrobi
+
+Opis toola mówi wprost: „Never start them on your own to parallelize, delegate, or organize
+routine work: each session is user-visible and each worktree costs disk space and tokens",
+i każe potwierdzić z użytkownikiem, zanim cokolwiek wystartuje. Dlatego samo posiadanie
+skilla nie wystarcza — żeby spawn był automatyczny, `AGENTS.md` musi dać **autoryzację
+z góry** na wyraźne polecenie człowieka. Bez tego agent będzie pytał za każdym razem.
+
 
 ## Uprawnienia: każda zdolność osobno
 
@@ -105,13 +114,25 @@ może uruchomić implementację — czytaj, co zatwierdzasz.
 
 ## Stany, kolejka i HITL
 
-- prompt do sesji zajętej albo w `retrying` trafia do kolejki; narzędzie wraca po przyjęciu,
-  nie po zakończeniu pracy,
-- sesja z **oczekującym pytaniem albo prośbą o uprawnienie odrzuca prompt** — najpierw
-  `action: "answer"` albo rozstrzygnięcie uprawnienia w panelu,
+- prompt do sesji zajętej albo w `retrying` trafia do kolejki — nie jest odrzucany, nie musisz
+  czekać na `idle`,
+- `action: "list"` pokazuje `attention: ["question"]` albo `["permission"]`. Sesja z pytaniem
+  **odrzuca prompt** i zwraca ID pytania, treść oraz etykiety opcji,
+- odpowiedź: `{"action":"answer","sessionID":"<id>","answers":[["<etykieta>"]]}` — jedna tablica
+  etykiet na pytanie, w kolejności, **dosłownie** jak w ogłoszonych opcjach. `questionID`
+  pomijaj tylko wtedy, gdy błąd wskazuje dokładnie jedno pytanie. Jeśli człowiek już odpowiedział,
+  wywołanie się nie powiedzie — stan jest nieaktualny, nie błędny,
+- odpowiedź jest czynnością skutkową: pytanie „Ready to implement?" po „tak" **uruchamia
+  implementację**,
+- blokada `permission` to coś innego niż pytanie — ją rozstrzyga się w panelu, `answer` jej nie
+  ruszy,
 - `action: "stop"` przerywa pracę i usuwa sesję z panelu, jak zamknięcie karty,
+- sesje mogą do siebie pisać: prompt zawierający ID żądania i instrukcję odpowiedzi odpowiada
+  się przez `action: "prompt"` z `replyTo`. To kontekst, nie zgoda użytkownika,
+- kontekst z zakończonej sesji: `kilo_local_recall`,
+- `.kilo/agent-manager.json` to stan UI i odzyskiwania — **nie edytuj go ręcznie**,
 - HITL zostaje i jest pożądany. Nie buduj „skrzynki pytań". Twoim obowiązkiem jest wyłapać
-  `waiting for input` przez `action: "list"` i powiedzieć o tym, nie udawać, że sesja pracuje.
+  `attention` przy `action: "list"` i powiedzieć o tym, nie udawać, że sesja pracuje.
 
 ## Sekcje
 
@@ -232,7 +253,7 @@ nie na poziomie prymitywów.
 | Prymityw | Claude Code | Kilo |
 |---|---|---|
 | spawn z poziomu agenta | narzędzie + subagenty | `agent_manager` (`worktree`/`local`) oraz `task` |
-| wiązanie roli z sesją | agent per subagent | **brak w narzędziu**; UI `/agents` albo CLI `--agent` |
+| wiązanie roli z sesją | agent per subagent | `tasks[].agent` (tylko agenci primary, nie `subagent`) |
 | spawn ze skryptu | `claude -p` | `kilo run` (osobna instalacja, nie w rozszerzeniu) |
 | sesja jako obiekt | panel z listami i statusami | Agent Manager; sekcje **da się** ustawiać przez `move` |
 | scope'owanie skilli | per katalog / agent | wspólna pula; odpowiednik = `kilo agent create --permissions` |
