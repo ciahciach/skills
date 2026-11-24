@@ -66,11 +66,13 @@ and formulas for sensitive information. No redacted export or import is provided
 
 Versions are named by SHA-256 and never replaced by this tool. Local read-only
 files do not protect against storage administrators; use appropriate retention
-and backups. This command does not qualify an Excel runtime or edit workbook internals.
+and backups. For controlled ordinary-formula import, see the Excel repo contract.
+This command does not qualify or invoke an Excel runtime or edit workbook internals.
 """
 
 import argparse
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 import hashlib
 from io import BytesIO, TextIOWrapper
 import json
@@ -235,7 +237,7 @@ def rectangle(reference):
     return left, top, right, bottom
 
 
-def workbook_artifacts(data, profile, *, format_only=False):
+def workbook_artifacts(data, profile, *, format_only=False, worksheet_parts=None):
     cells, sheets = [], []
     remaining = MAX_PACKAGE
     with ZipFile(BytesIO(data)) as book:
@@ -306,6 +308,8 @@ def workbook_artifacts(data, profile, *, format_only=False):
             if sheet_part in sheet_parts:
                 raise Blocked('Duplicate worksheet part.')
             sheet_parts.add(sheet_part)
+            if worksheet_parts is not None:
+                worksheet_parts[name] = sheet_part
             worksheet = xml(sheet_part)
             if worksheet.tag != f'{S}worksheet':
                 raise Blocked('Unsupported worksheet structure.')
@@ -368,8 +372,8 @@ def workbook_artifacts(data, profile, *, format_only=False):
     return cells, inventory
 
 
-def build_export(data, workbook, template=None, desktop_verified=None):
-    cells, inventory = workbook_artifacts(data, Path(workbook).suffix.lower())
+def build_export(data, workbook, template=None, desktop_verified=None, *, worksheet_parts=None):
+    cells, inventory = workbook_artifacts(data, Path(workbook).suffix.lower(), worksheet_parts=worksheet_parts)
     for value in [workbook, *(sheet['sheet'] for sheet in inventory['sheets'])]:
         if CREDENTIAL.search(value):
             raise Blocked('Publication blocked: possible credential in workbook metadata.')
@@ -559,6 +563,280 @@ def accept_initial(root, store, candidate, reviewed):
     print('Accepted the first synchronization point.')
 
 
+IMPORT_OPERATION = 'ordinary-formula-import'
+IMPORT_PROFILE = 'simple-xlsx'
+REFERENCE = r'\$?[A-Z]{1,3}\$?[1-9][0-9]{0,6}'
+OPERAND = rf'(?:{REFERENCE}|[0-9]{{1,15}}(?:\.[0-9]{{1,15}})?)'
+SAFE_FORMULA = re.compile(rf'=(?:{OPERAND}(?:[+*/-]{OPERAND})*|SUM\({REFERENCE}:{REFERENCE}\))\Z')
+
+
+def formula_map(raw):
+    artifact = json.loads(raw)
+    if artifact['kind'] != 'editable-ordinary-formulas' or not isinstance(artifact['cells'], list):
+        raise Blocked('Expected the editable ordinary formula artifact.')
+    result = {}
+    for row in artifact['cells']:
+        key = (row['sheet'], row['cell'])
+        if (not isinstance(key[0], str) or CREDENTIAL.search(key[0]) or key in result
+                or not isinstance(row['formula'], str) or CREDENTIAL.search(row['formula'])
+                or any(m[0] != '""' for m in TEXT_LITERAL.finditer(row['formula']))):
+            raise Blocked('Invalid, duplicate, or potentially sensitive Git formula entry.')
+        coordinates(key[1])
+        result[key] = row['formula']
+    return result
+
+
+def formula_diff(before, after, *, omissions=False):
+    keys = before.keys() | after.keys() if omissions else after.keys()
+    return [{'sheet': sheet, 'cell': cell, 'before': before.get((sheet, cell)),
+             'after': after.get((sheet, cell))} for sheet, cell in sorted(keys)
+            if before.get((sheet, cell)) != after.get((sheet, cell))]
+
+
+def import_snapshot(data, workbook):
+    parts: dict[str, str] = {}
+    artifacts = build_export(data, workbook, worksheet_parts=parts)
+    return parts, artifacts, formula_map(artifacts['ordinary-formulas.json'])
+
+
+def preservation(data, parts, change=None, *, data_only=False, verified_result=None):
+    """Conservative package comparison for simple XLSX; return hashes, never values."""
+    allowed = re.compile(r'(?:\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app)\.xml|'
+                         r'xl/(?:_rels/workbook\.xml\.rels|workbook\.xml|styles\.xml|sharedStrings\.xml|'
+                         r'theme/theme[0-9]+\.xml|worksheets/sheet[0-9]+\.xml))\Z')
+    with ZipFile(BytesIO(data)) as book:
+        entries = book.infolist()
+        if len(set(book.namelist())) != len(entries):
+            raise Blocked('Workbook contains duplicate package parts.')
+        if sum(info.file_size for info in entries) > MAX_PACKAGE:
+            raise Blocked('Workbook exceeds the preservation comparison limit.')
+        hashes = {}
+        for part in book.namelist():
+            if not allowed.fullmatch(part):
+                raise Blocked('Workbook has parts outside the simple XLSX import profile.')
+            raw = book.read(part)
+            if b'\0' in raw or b'<!DOCTYPE' in raw or b'<!ENTITY' in raw:
+                raise Blocked('Unsupported preservation XML.')
+            xml = ET.fromstring(raw)
+            if (any(node.get('TargetMode', 'Internal') != 'Internal' for node in xml)
+                    or any(node.tag in {f'{S}{tag}' for tag in
+                           ('extLst', 'definedName', 'externalReference', 'oleObject', 'control')} for node in xml.iter())):
+                raise Blocked('Workbook has features outside the simple XLSX import profile.')
+            if part == 'docProps/core.xml':
+                modified = xml.find('{http://purl.org/dc/terms/}modified')
+                if modified is not None:
+                    modified.text = None
+            elif part in parts.values():
+                for cell in xml.findall(f'{S}sheetData/{S}row/{S}c'):
+                    formula = cell.find(f'{S}f')
+                    value = cell.find(f'{S}v')
+                    if formula is not None and (formula.attrib or cell.get('cm') or cell.get('vm')):
+                        raise Blocked('Special formula records are outside the simple XLSX import profile.')
+                    if change and part == parts[change['sheet']] and cell.get('r') == change['cell']:
+                        x, y = coordinates(change['cell'])
+                        merges = (rectangle(node.attrib['ref']) for node in xml.findall(f'{S}mergeCells/{S}mergeCell'))
+                        if (formula is None or cell.get('cm') or cell.get('vm')
+                                or xml.find(f'{S}sheetProtection') is not None
+                                or any(l <= x <= r and t <= y <= b for l, t, r, b in merges)):
+                            raise Blocked('Unsafe target: not an unprotected, standalone, unmerged ordinary formula.')
+                        if verified_result is not None:
+                            try:
+                                cached = Decimal(value.text) if value is not None and value.text else None
+                                if (cached is None or not cached.is_finite() or cell.get('t', 'n') != 'n'
+                                        or cached != verified_result):
+                                    raise Blocked('Saved numeric result does not match the independent desktop readback.')
+                            except InvalidOperation:
+                                raise Blocked('Saved formula lacks a valid numeric result.') from None
+                        formula.text = None
+                        if value is not None:
+                            cell.remove(value)
+                    elif data_only and formula is None and value is not None and cell.get('t', 'n') == 'n':
+                        value.text = None
+                    elif data_only and formula is None and cell.get('t') == 'inlineStr':
+                        for text in cell.findall(f'{S}is//{S}t'):
+                            text.text = None
+            namespaces = list(event for _, event in ET.iterparse(BytesIO(raw), events=('start-ns',)))
+            hashes[part] = sha(json_bytes(namespaces) + ET.tostring(xml))
+    return hashes
+
+
+def import_plan(root, store, args):
+    sync_path = store / 'sync.json'
+    require_private(store, sync_path)
+    sync_bytes = read_bounded(sync_path, MAX_XML)
+    sync = json.loads(sync_bytes)
+    version = sync['versionSha256']
+    if sync['schema'] != 1 or not SHA.fullmatch(version) or Path(sync['workbook']).suffix.lower() != '.xlsx':
+        raise Blocked('Import requires an approved XLSX synchronization point.')
+    retained = store / 'versions' / f'{version}.xlsx'
+    require_private(retained.parent, retained)
+    base = retained_bytes(retained, version)
+    base_parts, base_export, old = import_snapshot(base, sync['workbook'])
+    if sha(base_export['manifest.json']) != sync['manifestSha256']:
+        # Initial onboarding can include a desktop readback attestation.
+        if sha(build_export(base, sync['workbook'], desktop_verified=version)['manifest.json']) != sync['manifestSha256']:
+            raise Blocked('Approved synchronization manifest does not match the retained workbook.')
+    source = repo_path(root, sync['workbook'])
+    output = repo_path(root, args.output)
+    artifact = repo_path(root, args.artifacts) / 'ordinary-formulas.json'
+    path = artifact.relative_to(root).as_posix()
+    commit = git(root, 'rev-parse', '--verify', '--end-of-options', f'{args.commit}^{{commit}}')
+    if commit.returncode:
+        raise Blocked('Expected an approved Git commit.')
+    oid = commit.stdout.strip()
+    entry = git(root, '--literal-pathspecs', 'ls-tree', oid, '--', path)
+    if entry.returncode or (entry.stdout and not entry.stdout.startswith(('100644 blob ', '100755 blob '))):
+        raise Blocked('Expected a regular committed formula artifact.')
+    edited = {}
+    if entry.stdout:
+        object_id = entry.stdout.split(None, 3)[2]
+        size = git(root, 'cat-file', '-s', object_id)
+        if size.returncode or int(size.stdout) > MAX_XML:
+            raise Blocked('Cannot read the committed formula artifact within the supported size limit.')
+        content = git(root, 'cat-file', 'blob', object_id)
+        if content.returncode:
+            raise Blocked('Cannot read the committed formula artifact.')
+        edited = formula_map(content.stdout)
+    plan = {'operation': IMPORT_OPERATION, 'profile': IMPORT_PROFILE, 'commit': oid, 'artifact': path, 'base': sync,
+            'output': output.relative_to(root).as_posix(), 'gitDiff': formula_diff(old, edited),
+            'workbookDiff': [], 'blockers': []}
+    blockers = plan['blockers']
+    if (source == output or output.suffix.lower() != '.xlsx' or not output.parent.is_dir()
+            or git(root, 'check-ignore', '--quiet', '--', plan['output']).returncode):
+        blockers.append('Choose a distinct new Git-ignored XLSX copy.')
+    if any(file.name.startswith('~$') or file.with_name('~$' + file.name).exists() for file in (source, output)):
+        blockers.append('Workbook lock file exists; close Excel before continuing.')
+        return plan, source, output, None, {}, sync_path, sync_bytes
+    if output.exists() != (args.command in ('verify-import', 'accept-import')):
+        blockers.append('Expected a new copy before apply, or the saved copy for verification.')
+    try:
+        current = read_bounded(source, MAX_PACKAGE)
+        plan['inputSha256'] = sha(current)
+        parts, _, live = import_snapshot(current, sync['workbook'])
+    except (Blocked, OSError, ValueError, KeyError, ET.ParseError, BadZipFile):
+        blockers.append('Cannot read and verify the saved source workbook.')
+        return plan, source, output, None, {}, sync_path, sync_bytes
+    plan['workbookDiff'] = formula_diff(old, live, omissions=True)
+    changes = plan['gitDiff']
+    change = changes[0] if len(changes) == 1 else None
+    if plan['workbookDiff']:
+        blockers.append('Two-sided managed drift; no merge.' if changes else 'Workbook managed drift; export and review first.')
+    if not change or any(value is None or len(value) > 8192 or not SAFE_FORMULA.fullmatch(value)
+                         for value in (change['before'], change['after'])):
+        blockers.append('Expected exactly one existing ordinary formula edit using simple arithmetic or SUM.')
+    else:
+        try:
+            for address in re.findall(REFERENCE, change['after']):
+                coordinates(address.replace('$', ''))
+            if preservation(current, parts, change, data_only=True) != preservation(base, base_parts, change, data_only=True):
+                blockers.append('Workbook structure or unmanaged content drift; target preservation is not verified.')
+        except Blocked as error:
+            blockers.append(str(error))
+    if not args.route_sha256:
+        blockers.append('Shared Excel route, authorization and backend qualification are required.')
+    else:
+        try:
+            pin = args.route_sha256
+            if not SHA.fullmatch(pin):
+                raise Blocked('Expected a pinned route receipt SHA-256.')
+            receipt = store / 'routes' / f'{pin}.json'
+            require_private(receipt.parent, receipt)
+            raw = read_bounded(receipt, MAX_XML)
+            route = json.loads(raw)
+            fields = ('entryPoint', 'backend', 'backendVersion', 'excelBuild', 'qualification', 'authorization')
+            if (sha(raw) != pin or not isinstance(route, dict) or route.get('evidenceClass') != 'desktop'
+                    or any(not isinstance(route.get(key), str) or not route[key].strip() for key in fields)
+                    or route.get('operation') != IMPORT_OPERATION or route.get('profile') != IMPORT_PROFILE
+                    or route.get('inputSha256') != sha(current) or route.get('commit') != oid
+                    or route.get('output') != plan['output']):
+                raise Blocked('Route receipt does not match the approved backend, operation, profile and inputs.')
+            no_op_path = store / 'routes' / f'{pin}.xlsx'
+            require_private(no_op_path)
+            no_op = read_bounded(no_op_path, MAX_PACKAGE)
+            if (route.get('noOpSha256') != sha(no_op)
+                    or preservation(no_op, parts) != preservation(current, parts)):
+                raise Blocked('Qualified no-op save does not preserve workbook contents.')
+            plan.update({key: route[key] for key in fields[:4]})
+            plan.update(routeSha256=pin, noOpSha256=sha(no_op), preservation='verified no-op')
+        except (Blocked, OSError, ValueError, TypeError, ET.ParseError, BadZipFile) as error:
+            blockers.append(str(error) if isinstance(error, Blocked) else 'Invalid or missing route qualification or no-op evidence.')
+    return plan, source, output, current, parts, sync_path, sync_bytes
+
+
+def controlled_import(root, store, args):
+    plan, source, output, current, parts, sync, previous = import_plan(root, store, args)
+    plan_sha = sha(json_bytes(plan))
+    if args.command == 'plan-import':
+        print(json_bytes({'stage': 'dry-run', **plan, 'planSha256': plan_sha}).decode('utf-8'), end='')
+        return int(bool(plan['blockers']))
+    if plan['blockers']:
+        raise Blocked(' '.join(plan['blockers']))
+    if args.approved_plan != plan_sha or sync.read_bytes() != previous or read_bounded(source, MAX_PACKAGE) != current:
+        raise Blocked('Approved plan, synchronization point or workbook changed; run a new dry-run.')
+    if args.command == 'prepare-import':
+        write_once(output, current, writable=True)
+        print('Prepared byte-exact working copy. Desktop save and readback have not run.')
+        return 0
+    saved = read_bounded(output, MAX_PACKAGE)
+    version = sha(saved)
+    if version == sha(current) or args.saved != version:
+        raise Blocked('Desktop save attestation must match the changed bytes.')
+    print(f'Desktop save attested: {version}')
+    if args.reopened != version:
+        raise Blocked('Independent desktop reopen attestation must match the saved bytes.')
+    try:
+        verified_result = Decimal(args.result)
+    except InvalidOperation:
+        raise Blocked('Independent desktop readback must record a numeric result.') from None
+    if not verified_result.is_finite():
+        raise Blocked('Independent desktop readback must record a finite numeric result.')
+    result_parts, exported, formulas = import_snapshot(saved, plan['output'])
+    _, _, original = import_snapshot(current, plan['base']['workbook'])
+    change = plan['gitDiff'][0]
+    original[change['sheet'], change['cell']] = change['after']
+    if (formulas != original or result_parts != parts
+            or preservation(saved, result_parts, change, verified_result=verified_result)
+            != preservation(current, parts, change)):
+        raise Blocked('Independent re-export does not match the approved edit and preservation requirements.')
+    manifest = sha(exported['manifest.json'])
+    print(f'Verified readback and re-export. Manifest SHA-256: {manifest}')
+    if args.command == 'verify-import':
+        print(json_bytes({name: json.loads(raw) for name, raw in exported.items()}).decode('utf-8'), end='')
+    if args.command == 'accept-import':
+        if args.reviewed != manifest:
+            raise Blocked('Acceptance requires the reviewed re-export manifest SHA-256.')
+        lock = store / 'accept-import.lock'
+        lock.mkdir(mode=0o700)
+        try:
+            if (read_bounded(sync, MAX_XML) != previous or read_bounded(source, MAX_PACKAGE) != current
+                    or read_bounded(output, MAX_PACKAGE) != saved
+                    or any(file.with_name('~$' + file.name).exists() for file in (source, output))):
+                raise Blocked('Workbook or synchronization point changed before acceptance.')
+            retained = store / 'versions' / f'{version}.xlsx'
+            require_private(retained)
+            if not retained.exists():
+                write_once(retained, saved)
+            retained_bytes(retained, version)
+            with tempfile.TemporaryDirectory(dir=store) as staging:
+                next_sync = Path(staging) / 'sync.json'
+                write_once(next_sync, json_bytes({'schema': 1, 'workbook': plan['output'], 'versionSha256': version,
+                                                  'manifestSha256': manifest}), writable=True)
+                # Windows cannot replace a read-only target. Keep the old bytes until atomic promotion.
+                mode = sync.stat().st_mode
+                if os.name == 'nt':
+                    sync.chmod(stat.S_IRUSR | stat.S_IWRITE)
+                try:
+                    next_sync.replace(sync)
+                except OSError:
+                    if os.name == 'nt':
+                        sync.chmod(mode)
+                    raise
+        finally:
+            lock.rmdir()
+        print('Accepted the verified copy as the new synchronization point; original unchanged.')
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -581,6 +859,21 @@ def main():
         command.add_argument('--reviewed', required=True, help='SHA-256 of the manifest you reviewed.')
     for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd):
         command.add_argument('--store', required=True, help='Existing private, access-controlled directory outside Git.')
+    for name in ('plan-import', 'prepare-import', 'verify-import', 'accept-import'):
+        command = commands.add_parser(name)
+        command.add_argument('artifacts', help='Directory containing the editable formula artifact in Git.')
+        command.add_argument('output', help='Distinct Git-ignored working XLSX path.')
+        command.add_argument('--store', required=True)
+        command.add_argument('--commit', required=True, help='Approved Git commit containing the edit.')
+        command.add_argument('--route-sha256', required=name != 'plan-import')
+        if name != 'plan-import':
+            command.add_argument('--approved-plan', required=True)
+        if name in ('verify-import', 'accept-import'):
+            command.add_argument('--saved', required=True, help='SHA-256 attested after desktop save and close.')
+            command.add_argument('--reopened', required=True, help='SHA-256 attested after independent desktop reopen.')
+            command.add_argument('--result', required=True, help='Independently read numeric result (synthetic data only).')
+        if name == 'accept-import':
+            command.add_argument('--reviewed', required=True, help='Verified re-export manifest SHA-256.')
     args = parser.parse_args()
     try:
         result = git(Path.cwd(), 'rev-parse', '--show-toplevel')
@@ -596,8 +889,10 @@ def main():
             _, artifacts = verified_export(root, store, preview_path(store, args.label), args.reviewed)
             write_export(repo_path(root, args.destination), artifacts)
             print('Published the reviewed export. No Git staging or synchronization performed.')
-        else:
+        elif args.command == 'accept-initial':
             accept_initial(root, store, args.candidate, args.reviewed)
+        else:
+            return controlled_import(root, store, args)
     except Blocked as error:
         print(f'Blocked: {error}', file=sys.stderr)
         return 1
