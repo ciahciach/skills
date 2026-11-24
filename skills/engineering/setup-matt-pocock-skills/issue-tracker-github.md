@@ -48,7 +48,7 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Blocking**: see **Blocking** under Conventions.
 - **Frontier query**: start with the map's direct sub-issues (see **Read the hierarchy** below) or its fallback task list. Keep open children, drop any with an open blocker (see **Count open blockers**, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
 - **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
-- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Resolve**: Follow `/wayfinder`'s **Work through the map** closure criteria. Use **Read the hierarchy** below to verify direct children (or check the map task list and each child's `Part of` line when using the fallback). For a ticket ready to close, record the resolution with `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
 
 ### Read the hierarchy
 
