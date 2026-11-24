@@ -88,7 +88,8 @@ stan tej sesji i mówi, co wpisać.
 
 Off the main flow entirely.
 
-- **`/spawn`**: start an explicitly requested Kilo VS Code Agent Manager session. Use `local` for a fresh session in the same checkout and `worktree` for isolation on an agreed base. `spawn` reconciles uncertain starts, but it neither schedules an issue graph nor transfers write ownership. Internal subagents are not Agent Manager sessions.
+- **`/kilo-handoff`**: on explicit request, continue the same assignment in a fresh Kilo VS Code session in the same checkout. Use it when the new session must take over writes, not just receive a briefing. It uses `spawn` for startup and records release, verification of local Git changes, and claim before the successor writes.
+- **`/spawn`**: start an explicitly requested Kilo VS Code Agent Manager session without transferring write ownership. Use `local` for a fresh session in the same checkout and `worktree` for isolation on an agreed base. `spawn` reconciles uncertain starts, but does not schedule an issue graph. Internal subagents are not Agent Manager sessions.
 
 - **`/grill-me`**: the same relentless interview as `/grill-with-docs`, but **stateless**: it saves nothing locally and builds no `GLOSSARY.md`. Reach for it when you are **not working in a working directory** (sharpening a plan, a design, a piece of writing, anything with no repo under it). If you are in a working directory, use `/grill-with-docs` instead: it runs the same interview and leaves a paper trail, so it is strictly the better one.
 - **`/grilling`** is the interview primitive itself: rounds, the frontier, facts are the agent's job and decisions are yours. `/grill-me` and `/grill-with-docs` are the two named ways in, and `/triage`, `/wayfinder` and `/improve-codebase-architecture` all run it internally. Reach for it directly only when you want the interview with no wrapper around it.
