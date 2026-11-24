@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 from xml.sax.saxutils import escape
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 
 SCRIPT = Path(__file__).with_name('excel-onboarding.py')
@@ -77,7 +77,7 @@ def make_writable(path: Path):
         path.chmod(stat.S_IWRITE | stat.S_IRUSR)
 
 
-def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=False, copy_metadata=''):
+def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=False, copy_metadata='', extra_cells=''):
     content_type = ('application/vnd.ms-excel.sheet.macroEnabled.main+xml' if macros
                     else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml')
     vba_type = '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' if macros else ''
@@ -101,7 +101,7 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=F
                       '<sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
         book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/>{vba_link}{connections}</Relationships>')
         rows = '' if expression is None else f'''
-          <row r="1"><c r="A1"><f>{escape(expression)}</f><v>92345</v></c><c r="B1" t="inlineStr"><is><t>PRIVATE_FIXTURE_DATA</t></is></c></row>
+          <row r="1"><c r="A1"><f>{escape(expression)}</f><v>92345</v></c><c r="B1" t="inlineStr"><is><t>PRIVATE_FIXTURE_DATA</t></is></c>{extra_cells}</row>
           <row r="3"><c r="A3"><f>2*2</f></c></row>
           <row r="4"><c r="A4" cm="1"><f t="array" ref="A4:A5">ROW(A4:A5)</f></c></row>
           <row r="5"><c r="A5"><f>3+2</f><v>5</v></c></row>
@@ -349,12 +349,14 @@ class OnboardingTest(unittest.TestCase):
         self.assertEqual(self.book.read_bytes(), before)
 
     def save_query_fixture(self, path, value, *, cell_formula='2+2', connection_id='1', unsafe=False,
-                           refresh_on_load=False, command_query='Loaded Query', copy_metadata=''):
-        save_fixture(path, cell_formula, queries=True, copy_metadata=copy_metadata)
+                           refresh_on_load=False, command_query='Loaded Query', copy_metadata='',
+                           load_column='D', result_value=1, filter_column=None):
+        save_fixture(path, cell_formula, queries=True, copy_metadata=copy_metadata,
+                     extra_cells=f'<c r="{load_column}1"><v>{result_value}</v></c>')
         package = BytesIO()
         with ZipFile(package, 'w') as mashup:
             expression = '"PRIVATE_INLINE_SECRET"' if unsafe else f'#table(type table [N = number], {{{{{value}}}}})'
-            mashup.writestr('Formulas/Section1.m',
+            mashup.writestr(ZipInfo('Formulas/Section1.m'),
                             f'section Section1;\nshared #"Loaded Query" = {expression};\n'
                             'shared Staging = let N = 1 in N;\n')
         payload = b'\0' * 4 + b''.join(struct.pack('<I', len(part)) + part for part in (
@@ -372,7 +374,9 @@ class OnboardingTest(unittest.TestCase):
             book.writestr('xl/tables/_rels/table1.xml.rels', f'<Relationships xmlns="{PACKAGE}">'
                           f'<Relationship Id="rId1" Type="{OFFICE}/queryTable" Target="../queryTables/queryTable1.xml"/>'
                           '</Relationships>')
-            book.writestr('xl/tables/table1.xml', f'<table xmlns="{SHEET}" name="Results" ref="D1:D2">'
+            book.writestr('xl/tables/table1.xml', f'<table xmlns="{SHEET}" name="Results" '
+                          f'ref="{load_column}1:{load_column}2">'
+                          f'<autoFilter ref="{filter_column or load_column}1:{filter_column or load_column}2"/>'
                           '<tableColumns count="1"><tableColumn id="1" name="N"/></tableColumns></table>')
             book.writestr('xl/worksheets/_rels/sheet1.xml.rels', f'<Relationships xmlns="{PACKAGE}">'
                           f'<Relationship Id="rId1" Type="{OFFICE}/table" Target="../tables/table1.xml"/>'
@@ -403,6 +407,64 @@ class OnboardingTest(unittest.TestCase):
         self.export('formulas')
         self.publish('formulas')
         self.assertFalse((self.repo / 'formulas/power-query.json').exists())
+
+    def test_manual_load_move_requires_review_and_explicit_acceptance(self):
+        self.save_query_fixture(self.book, 1)
+        self.export('baseline', '--power-query')
+        self.publish('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
+        base = self.book.read_bytes()
+        sync_file = self.store / 'sync.json'
+        sync = sync_file.read_bytes()
+        (self.repo / '.gitignore').write_text('*.xlsx\n', encoding='utf-8')
+        copy = self.repo / 'moved.xlsx'
+        self.save_query_fixture(copy, 1, load_column='F')
+        saved = copy.read_bytes()
+        version = hashlib.sha256(saved).hexdigest()
+        retained = self.store / 'versions' / f'{version}.xlsx'
+        args = ('baseline', copy.name, 'new-baseline', '--query', 'Loaded Query', '--to', 'F1:F2',
+                '--qualified-route', 'synthetic-test-only', '--save-evidence', 'simulated-manual-move',
+                '--reopen-evidence', 'simulated-independent-reopen', '--reopened-sha256', version)
+        raw = self.cli('pq-load-review', *args)
+        review = json.loads(raw)
+        self.assertEqual(review['before']['worksheetLoads'][0]['range'], 'D1:D2')
+        self.assertEqual(review['after']['worksheetLoads'][0]['range'], 'F1:F2')
+        for private in ('PRIVATE_', 'Provider=', '92345'):
+            self.assertNotIn(private, raw)
+        self.assertIn('review checksum', self.cli('pq-load-accept', *args, '--accepted', '0' * 64, ok=False))
+        self.assertFalse(retained.exists())
+        self.assertFalse((self.repo / 'new-baseline').exists())
+        self.assertEqual(sync_file.read_bytes(), sync)
+        self.save_query_fixture(copy, 1, load_column='F', result_value=98765)
+        bad_args = (*args[:-1], hashlib.sha256(copy.read_bytes()).hexdigest())
+        self.assertIn('preservation of the table and worksheet', self.cli('pq-load-accept', *bad_args,
+                      '--accepted', review['reviewSha256'], ok=False))
+        self.assertEqual(sync_file.read_bytes(), sync)
+        self.assertFalse(retained.exists())
+        self.save_query_fixture(copy, 1, load_column='F', filter_column='D')
+        bad_args = (*args[:-1], hashlib.sha256(copy.read_bytes()).hexdigest())
+        self.assertIn('table filter range', self.cli('pq-load-review', *bad_args, ok=False))
+        self.assertEqual(sync_file.read_bytes(), sync)
+        copy.write_bytes(saved)
+        if os.name == 'nt':
+            with copy.open('r+b'):
+                self.assertIn('read-only workbook handle', self.cli('pq-load-accept', *args,
+                              '--accepted', review['reviewSha256'], ok=False))
+            self.assertEqual(sync_file.read_bytes(), sync)
+            self.assertFalse(retained.exists())
+            self.assertFalse((self.repo / 'new-baseline').exists())
+        self.cli('pq-load-accept', *args, '--accepted', review['reviewSha256'])
+        self.assertEqual(retained.read_bytes(), saved)
+        manifest = (self.repo / 'new-baseline/manifest.json').read_bytes()
+        self.assertEqual(json.loads(sync_file.read_bytes()), {
+            'schema': 1, 'workbook': copy.name, 'versionSha256': version,
+            'manifestSha256': hashlib.sha256(manifest).hexdigest(),
+        })
+        self.assertEqual(self.book.read_bytes(), base)
+        self.assertEqual(copy.read_bytes(), saved)
+        receipt = self.store / 'versions' / f'{review["reviewSha256"]}.load-review.json'
+        self.assertEqual(json.loads(receipt.read_bytes()), review)
+        self.assertNotIn('desktopVerifiedSha256', json.loads(manifest))
 
     def test_power_query_import_verifies_a_separate_copy_without_advancing_sync(self):
         candidate = self.store / 'candidates/attempt/workbook.xlsx'
