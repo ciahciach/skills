@@ -23,4 +23,12 @@ The two branches produce very different artifacts, so getting this wrong wastes 
 3. **No persistence by default.** State lives in memory. Persistence is the thing the prototype is _checking_, not something it should depend on. If the question explicitly involves a database, hit a scratch DB or a local file with a clear "PROTOTYPE, wipe me" name.
 4. **Skip the polish.** No tests, no error handling beyond what makes the prototype _runnable_, no abstractions. The point is to learn something fast.
 5. **Surface the state.** After every action (logic) or on every variant switch (UI), print or render the full relevant state so the user can see what changed.
-6. **Capture it when done.** Fold any validated decision into the real code, then capture the prototype itself as a **primary source**: commit it to a throwaway branch, out of main, and leave a context pointer to that branch on the implementation issue. Capture the answer too (the verdict and the question it settled) in the issue or a commit. The main branch keeps only the validated decision.
+
+## Hand off the result
+
+Carry the question and verdict into the handoff and the implementation issue if there is one. Keep the prototype as a **primary source**, out of main. Record these separately:
+
+- **Artifact:** Give a durable link to the reviewed version that the recipient can access (for example, a commit permalink to the artifact or an existing attachment). Otherwise write **Local only**, with the exact path and the original machine or worktree needed to find it. A `file://` URL, localhost URL, unpublished branch or link to a checkpoint that only describes the artifact is not a durable artifact link. Do not commit, push or publish a local artifact without separate authorization. If separately authorized to preserve it in Git, use a throwaway branch out of main.
+- **Human acceptance:** Link or cite the human verdict and what it covers, or say it is pending. Passing checks do not count as acceptance.
+- **Verification:** Link or cite the checks actually run, their environment and results. Report compilation separately from scenario execution when applicable; mark unverified checks explicitly. Human acceptance is not verification, and execution does not prove compilation.
+- **Backend qualification (when required):** Link evidence for the backend, version and required capabilities, or say it is missing and keep gated work pending. Neither acceptance nor execution results replace qualification.
