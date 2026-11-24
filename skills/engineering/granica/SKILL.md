@@ -1,6 +1,6 @@
 ---
 name: granica
-description: Use when: compact, clear, handoff or continue?
+description: "Use when: compact, clear, handoff or continue?"
 disable-model-invocation: true
 ---
 
