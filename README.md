@@ -206,6 +206,54 @@ And crucially, [`/improve-codebase-architecture`](./skills/engineering/improve-c
 
 Software engineering fundamentals matter more than ever. These skills are my best effort at condensing these fundamentals into repeatable practices, to help you ship the best apps of your career. Enjoy.
 
+## Kilo VS Code Workflow
+
+This diagram shows the intended workflow for this fork, not a record of a successful runtime test. The [#51 preflight report](./docs/evidence/kilo-vscode-acceptance-51.md) verified the published `v1.4.0` package, but runtime acceptance was `BLOCKED`: Kilo had loaded an older local copy of `kilo-handoff`, and the A/B/C trials did not run. [Final acceptance #70](https://github.com/ciahciach/skills/issues/70) will check the workflow in Kilo VS Code and provide evidence for any corrections to this diagram.
+
+```mermaid
+flowchart TD
+    Wayfinder["wayfinder: resolve decisions on a shared map"] --> Spec["to-spec: publish the agreed spec"]
+    Grill["grill-with-docs: clarify scope and decisions"] --> Spec
+    Spec --> Tickets["to-tickets: split work and record blockers"]
+    Tickets --> Scope{"What did the human commission?"}
+    Scope -->|One issue| Single["implement: work on the selected issue"]
+    Scope -->|Explicit issue graph| Graph["implement-spec: confirm scope, base and concurrency limit"]
+    Graph --> Frontier["Select ready issues with free slots and verified prerequisites"]
+    Frontier -->|Starts authorized| Spawn["spawn: fresh Agent Manager worktree per issue"]
+    Spawn -->|Worker start verified| Work["Implement and test"]
+    Spawn -->|Start uncertain| Reconcile["Check Agent Manager, Git and GitHub before any retry"]
+    Reconcile -->|Existing start verified| Work
+    Reconcile -->|Confirmed rejection before creation; retry authorized| Spawn
+    Single --> Work
+
+    Work -->|Native question| Question["Human answers in Kilo"]
+    Work -->|Native permission| Permission["Human approves in Kilo"]
+    Question -->|Resolution allows work| Work
+    Permission -->|Approval allows work| Work
+
+    Work -->|Human requests a fresh session| Successor["kilo-handoff uses spawn local: verify read-only successor in same checkout"]
+    Successor --> Release["Predecessor: RELEASED write scope"]
+    Release --> Check["Successor: CHECKED same checkout and staged, unstaged and untracked work"]
+    Check -->|State matches| Claim["Successor: CLAIMED scope before first write"]
+    Claim --> Work
+
+    Work --> Review["Independent code-review of the current diff"]
+    Review -->|Fixes needed or reviewed scope changes| Work
+    Review -->|Review passes| Commit["Commit the reviewed diff"]
+    Commit -->|Publication authorized| PR["Push and open the issue PR"]
+    PR -->|Reviewed scope changes: hold merge| Review
+    PR -->|All required reviews current and passed| Merge["Human merges the PR"]
+    Merge -->|Graph only| Verify["On resume, verify human merge into the required base"]
+    Verify -->|Verified merge unlocks dependents| Frontier
+    Verify -->|All deliveries verified| Done["Report graph complete"]
+```
+
+- A queued prompt is not a worker start. Retry only if the host confirms rejection before creation and reconciliation rules out a session, worktree or PR from that attempt. An unresolved start stays blocked.
+- `RELEASED`, `CHECKED` and `CLAIMED` share a transfer ID. If the state does not match, the successor does not write. If the successor's start or ownership is uncertain, reconcile the transfer record before starting another session or resuming writes.
+- Native question and permission gates can apply at start, during work or at publication. They pause affected steps, not independent issues. Review must cover the published diff, and a PR cannot be marked ready until any required combined review across PRs passes.
+- `implement` stops at the commit unless publication is separately authorized. In the Kilo `implement-spec` profile, the default is one worktree and one PR per issue. The PR merged into the default branch carries the closing reference.
+- In the planned A/B/C trial, A and B run in parallel. C waits for A's verified human merge, not a ready PR or green CI, and should start while B is still running. The coordinator resumes through a supported notification or scheduled recheck; if neither is available, it reports that manual resume is needed. Merge does not authorize a release or deployment.
+
 ## Reference
 
 These split on one axis: who can invoke them. **User-invoked** skills are reachable only when you type them (e.g. `/grill-me`); their job is to orchestrate. **Model-invoked** skills can be invoked by you _or_ reached for automatically by the agent when the task fits; they hold the reusable discipline. A user-invoked skill may invoke model-invoked skills, but never another user-invoked one.

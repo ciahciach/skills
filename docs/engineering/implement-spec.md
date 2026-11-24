@@ -28,6 +28,8 @@ You invoke this by typing `/implement-spec`, and the agent won't reach for it on
 
 ## The Kilo Frontier
 
+See the [Kilo VS Code workflow diagram](https://github.com/ciahciach/skills/blob/main/README.md#kilo-vs-code-workflow) for the full path from planning to human merge and the current runtime acceptance status.
+
 In Kilo VS Code, invoke `/implement-spec` with the spec, the exact issues to execute, the target base, and any override to the default of three active execution slots. Specify whether workers may commit, push, and open PRs. The coordinator distinguishes a queued prompt from actual work and a finished worker from a merged issue. A ready PR or green CI cannot unlock dependent work. After a verified human merge it refills the frontier without waiting for an entire wave. An integration branch is a separately agreed exception.
 
 ## The Integration Branch on Other Hosts
