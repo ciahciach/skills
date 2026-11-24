@@ -10,7 +10,9 @@ It is a prompt-driven skill, not a deterministic script. It reads your `git remo
 
 You invoke this by typing `/setup-matt-pocock-skills`; the [agent](https://www.aihero.dev/ai-coding-dictionary/agent) won't reach for it on its own. Its metadata marks it non-invokable on purpose, so no other skill can fire it for you.
 
-Reach for it once per repo, before the first use of any other engineering skill. If [triage](https://aihero.dev/skills-triage), [to-spec](https://aihero.dev/skills-to-spec), [to-tickets](https://aihero.dev/skills-to-tickets) or [wayfinder](https://aihero.dev/skills-wayfinder) start guessing where your issues go, or apply labels your tracker doesn't have, this repo has not been set up yet. You can run it in a repo halfway through a project. The skill reads what is already there, so no earlier work is lost.
+Reach for it once per repo, before the first use of an engineering skill that needs tracker and domain configuration. If [triage](https://aihero.dev/skills-triage), [to-spec](https://aihero.dev/skills-to-spec), [to-tickets](https://aihero.dev/skills-to-tickets) or [wayfinder](https://aihero.dev/skills-wayfinder) start guessing where your issues go, or apply labels your tracker doesn't have, this repo has not been set up yet. You can run it in a repo halfway through a project. The skill reads what is already there, so no earlier work is lost.
+
+For Excel versioning, this skill can offer the separate `/setup-excel-repo` beta, even before the repo has a workbook. Opting in gives you the command to run yourself. This skill does not install it, invoke it, or change the Excel scaffold or workbook. The beta can also run standalone and configure the engineering guidance itself.
 
 ## Prerequisites
 

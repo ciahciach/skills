@@ -28,6 +28,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.scratch/`: a sign that a local-markdown issue tracker convention is already in use
 - Is the `triage` skill installed? (a `triage` skill folder alongside this one, or `triage` in your available skills.) This decides whether Section B runs at all.
 - Monorepo signals: a `pnpm-workspace.yaml`, a `workspaces` field in `package.json`, or a populated `packages/*` with its own `src/`. These are present only in a genuinely large multi-package repo; their absence means single-context, which is almost every repo.
+- Note existing Excel repo rules or workbook-versioning layout and any current or planned Excel work the user mentioned. No workbook inspection is needed.
 
 ### 2. Present findings and ask
 
@@ -129,7 +130,8 @@ Let them edit before writing.
 - When the user chose to create one, start from `agents-template.md` in this skill's directory.
   It covers what these skills expect (tracker, wiki, provenance, git discipline) plus the generic
   rules a repo needs and no skill owns: autonomy limits, safe text editing, change boundaries,
-  versioning, and what a spreadsheet-heavy repo must not do. Fill in the `<...>` placeholders,
+  versioning, and retention. Leave the Excel and Power Query sections out of new instruction files;
+  the optional Excel handoff below is separate. Fill in the `<...>` placeholders,
   **delete the sections that don't apply**, and append the `## Agent skills` / `## Wiki` blocks.
   Never ship the template with placeholders: a dead section reads as a requirement.
 
@@ -213,6 +215,14 @@ Before you say it's done, prove it — read back what you wrote and report the r
 
 Configuring a repo is not a milestone. If the repo records milestones, say plainly that this run
 consumed none.
+
+If the user wants to version Excel logic or structure, or exploration found an Excel scaffold,
+offer the optional `/setup-excel-repo` beta. If Excel intent is unknown, mention that the option
+also works before the first workbook. On explicit opt-in, give exactly one next step: run
+`/setup-excel-repo` themselves in this repo if available in their harness. This satisfies the
+next-step pointer below. On refusal, leave the Excel scaffold untouched. Matt's setup does not
+invoke or install the beta, create or edit its scaffold, or onboard a workbook. The beta reuses
+the tracker and knowledge layout configured here.
 
 <!-- next-step-pointer -->
 > **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state

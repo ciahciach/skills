@@ -1,0 +1,5 @@
+interface:
+  display_name: "Setup Excel Repo"
+  short_description: "Set up Excel workbook versioning in a repo"
+policy:
+  allow_implicit_invocation: false
