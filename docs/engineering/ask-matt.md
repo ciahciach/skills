@@ -87,6 +87,8 @@ Check the changelog for a rename before assuming it is gone. `writing-great-skil
 
 ## Where it fits
 
+For an explicitly requested Kilo VS Code Agent Manager session, use [spawn](https://aihero.dev/skills-spawn) to continue in the same checkout or isolate an assignment. It checks uncertain starts before trying again; it does not schedule the issue graph or transfer write ownership.
+
 `ask-matt` is a **standalone router** that sits over the whole set. It is never a step in a chain. It points into every chain, and the other docs pages link back to it so none of them has to redraw the graph. From here you most often land on [grill-with-docs](https://aihero.dev/skills-grill-with-docs), the head of the main flow, or [triage](https://aihero.dev/skills-triage), the on-ramp for work that arrived rather than work you started.
 
 It is a [secondary source](https://www.aihero.dev/ai-coding-dictionary/secondary-source) over the skills it describes. Where the router and a `SKILL.md` disagree, the `SKILL.md` is right.

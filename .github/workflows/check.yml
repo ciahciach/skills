@@ -8,7 +8,7 @@ on:
 
 jobs:
   frontmatter:
-    name: SKILL.md frontmatter
+    name: Skills and packaging
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,8 +24,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check frontmatter
-        run: npm run check-frontmatter
+      - name: Check skills and packaging
+        run: npm run check-skills
 
   excel-cli:
     name: Excel CLI tests and typing

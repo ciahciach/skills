@@ -1,0 +1,3 @@
+interface:
+  display_name: Spawn
+  short_description: Start or reconcile a Kilo Agent Manager session
