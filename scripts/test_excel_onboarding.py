@@ -1,4 +1,5 @@
 import base64
+import csv
 import hashlib
 from io import BytesIO, TextIOWrapper
 import json
@@ -71,7 +72,18 @@ class OnboardingTest(unittest.TestCase):
         self.repo.mkdir()
         subprocess.run(['git', 'init', '-q'], cwd=self.repo, check=True)
         self.store = fixture / 'private-store'
-        self.store.mkdir(mode=0o700)
+        if sys.platform == 'win32':
+            self.store.mkdir()
+            identity = subprocess.check_output(['whoami.exe', '/user', '/fo', 'csv', '/nh'],
+                                               text=True, errors='replace', timeout=30)
+            _, sid = next(csv.reader(identity.splitlines()))
+            # Grant the operator access before removing the temp directory's inherited ACEs.
+            subprocess.run(['icacls.exe', str(self.store), '/grant:r', f'*{sid}:(OI)(CI)F'],
+                           check=True, timeout=30, stdout=subprocess.PIPE)
+            subprocess.run(['icacls.exe', str(self.store), '/inheritance:r'],
+                           check=True, timeout=30, stdout=subprocess.PIPE)
+        else:
+            self.store.mkdir(mode=0o700)
         self.book = self.repo / 'model.xlsx'
         (self.repo / 'AGENTS.md').write_text('Prepared fixture. See docs/agents/excel.md.\n', encoding='utf-8')
         (self.repo / 'docs/agents').mkdir(parents=True)
@@ -82,7 +94,7 @@ class OnboardingTest(unittest.TestCase):
         result = subprocess.run([sys.executable, '-X', 'utf8', *entry, *args, '--store', str(self.store)],
                                 cwd=self.repo, capture_output=True, encoding='utf-8')
         if ok:
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.returncode, 0, f'{args!r}: {result.stderr}')
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
         return result.stdout + result.stderr
@@ -195,6 +207,24 @@ class OnboardingTest(unittest.TestCase):
         save_fixture(self.book, '2+2', macros=True)
         error = self.export('baseline', ok=False)
         self.assertIn('Saved workbook format does not match .XLSX', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_export_rejects_store_readable_by_other_users(self):
+        save_fixture(self.book, '2+2')
+        if sys.platform == 'win32':
+            # Grant Everyone read access to this empty synthetic store only.
+            subprocess.run(['icacls.exe', str(self.store), '/grant', '*S-1-1-0:(R)'],
+                           check=True, timeout=30)
+        else:
+            self.store.chmod(0o755)
+        error = self.export('baseline', ok=False)
+        self.assertIn('private store must grant access only to the operator', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_export_rejects_workbook_outside_worktree(self):
+        save_fixture(self.repo.parent / 'outside.xlsx', '2+2')
+        error = self.cli('export', '../outside.xlsx', 'baseline', ok=False)
+        self.assertIn('Use a path relative to the Git worktree root.', error)
         self.assertEqual(list(self.store.iterdir()), [])
 
     def test_saved_blank_xlsx_uses_the_same_initial_acceptance(self):
