@@ -1,9 +1,13 @@
+import base64
+import csv
 import hashlib
-from io import TextIOWrapper
+from io import BytesIO, TextIOWrapper
 import json
+import os
 from pathlib import Path
 import runpy
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -18,28 +22,84 @@ OFFICE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 
+class NativePilotTest(unittest.TestCase):
+    def test_first_excel_save_revision_transition_is_narrow(self):
+        verify = runpy.run_path(str(SCRIPT))['excel_copy_metadata_changes']
+
+        def workbook(prefix: str, digit: str, revision: str = '0') -> bytes:
+            data = BytesIO()
+            guid = f'{digit * 8}-{digit * 4}-{digit * 4}-{digit * 4}-{digit * 12}'
+            with ZipFile(data, 'w') as book:
+                book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" '
+                              'xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">'
+                              f'<xr:revisionPtr revIDLastSave="{revision}" documentId="{prefix}_{{{guid}}}"/>'
+                              '</workbook>')
+            return data.getvalue()
+
+        base = workbook('8', '1')
+        saved = workbook('13_ncr:1', '2')
+        self.assertEqual(verify(base, saved, Path.cwd()), ['revisionPtr.documentId'])
+        self.assertIsNone(verify(saved, base, Path.cwd()))
+        self.assertIsNone(verify(workbook('9', '1'), saved, Path.cwd()))
+        self.assertIsNone(verify(base, workbook('13_ncr:1', '2', revision='1'), Path.cwd()))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows ACL regression')
+    def test_attempt_storage_does_not_inherit_broad_access(self):
+        onboarding = runpy.run_path(str(SCRIPT))
+        temp_parent = Path(tempfile.gettempdir()).resolve() / 'kilo'
+        temp_parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temp_parent) as name:
+            parent = Path(name).resolve()
+            subprocess.run(['icacls.exe', str(parent), '/grant', '*S-1-5-32-545:(OI)(CI)(RX)'],
+                           check=True, capture_output=True, timeout=60)
+            with self.assertRaisesRegex(onboarding['Blocked'], 'platform administrators'):
+                onboarding['require_private'](parent)
+            attempt, fixture, store = onboarding['create_pilot_workspace'](parent)
+            self.assertEqual(attempt.parent, parent)
+            self.assertTrue(fixture.is_dir() and store.is_dir())
+            evidence = store / 'report.json'
+            evidence.write_text('{}', encoding='utf-8')
+            onboarding['require_private'](attempt)
+            onboarding['require_private'](fixture, store, evidence, store / 'not-created-yet')
+            with self.assertRaisesRegex(onboarding['Blocked'], 'platform administrators'):
+                onboarding['require_private'](parent)
+
+    def test_requires_an_explicit_desktop_request(self):
+        result = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(SCRIPT), 'pq-pilot'],
+                                stdin=subprocess.DEVNULL, capture_output=True, encoding='utf-8', timeout=90)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires explicit --desktop', result.stderr)
+        self.assertEqual(result.stdout, '')
+
+
 def make_writable(path: Path):
     if path.exists():
         path.chmod(stat.S_IWRITE | stat.S_IRUSR)
 
 
-def save_fixture(path, expression, *, macros=False, missing_vba=False):
+def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=False, copy_metadata=''):
     content_type = ('application/vnd.ms-excel.sheet.macroEnabled.main+xml' if macros
                     else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml')
     vba_type = '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' if macros else ''
     vba_link = ('<Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" '
                 'Target="vbaProject.bin"/>') if macros else ''
+    connections = f'<Relationship Id="rId3" Type="{OFFICE}/connections" Target="connections.xml"/>' if queries else ''
+    tables = '<tableParts count="1"><tablePart r:id="rId1"/></tableParts>' if queries else ''
+    query_type = ('<Override PartName="/xl/queryTables/queryTable1.xml" '
+                  'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"/>') if queries else ''
     with ZipFile(path, 'w') as book:
         book.writestr('[Content_Types].xml', f'''<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
           <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
           <Default Extension="xml" ContentType="application/xml"/>
           {vba_type}
+          {query_type}
           <Override PartName="/xl/workbook.xml" ContentType="{content_type}"/>
           <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
         </Types>''')
         book.writestr('_rels/.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-        book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}"><sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
-        book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/>{vba_link}</Relationships>')
+        book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}">{copy_metadata}'
+                      '<sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/>{vba_link}{connections}</Relationships>')
         rows = '' if expression is None else f'''
           <row r="1"><c r="A1"><f>{escape(expression)}</f><v>92345</v></c><c r="B1" t="inlineStr"><is><t>PRIVATE_FIXTURE_DATA</t></is></c></row>
           <row r="3"><c r="A3"><f>2*2</f></c></row>
@@ -48,7 +108,7 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False):
           <row r="7"><c r="A7"><f t="shared" ref="A7:A8" si="0">B7+1</f></c></row>
           <row r="8"><c r="A8"><f t="shared" si="0"/></c></row>
         '''
-        book.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{SHEET}"><sheetData>{rows}</sheetData></worksheet>')
+        book.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{SHEET}" xmlns:r="{OFFICE}"><sheetData>{rows}</sheetData>{tables}</worksheet>')
         if macros and not missing_vba:
             book.writestr('xl/vbaProject.bin', b'Synthetic opaque VBA bytes')
 
@@ -63,7 +123,18 @@ class OnboardingTest(unittest.TestCase):
         self.repo.mkdir()
         subprocess.run(['git', 'init', '-q'], cwd=self.repo, check=True)
         self.store = fixture / 'private-store'
-        self.store.mkdir(mode=0o700)
+        if sys.platform == 'win32':
+            self.store.mkdir()
+            identity = subprocess.check_output(['whoami.exe', '/user', '/fo', 'csv', '/nh'],
+                                               text=True, errors='replace', timeout=30)
+            _, sid = next(csv.reader(identity.splitlines()))
+            # Grant the operator access before removing the temp directory's inherited ACEs.
+            subprocess.run(['icacls.exe', str(self.store), '/grant:r', f'*{sid}:(OI)(CI)F'],
+                           check=True, timeout=30, stdout=subprocess.PIPE)
+            subprocess.run(['icacls.exe', str(self.store), '/inheritance:r'],
+                           check=True, timeout=30, stdout=subprocess.PIPE)
+        else:
+            self.store.mkdir(mode=0o700)
         self.book = self.repo / 'model.xlsx'
         (self.repo / 'AGENTS.md').write_text('Prepared fixture. See docs/agents/excel.md.\n', encoding='utf-8')
         (self.repo / 'docs/agents').mkdir(parents=True)
@@ -74,13 +145,13 @@ class OnboardingTest(unittest.TestCase):
         result = subprocess.run([sys.executable, '-X', 'utf8', *entry, *args, '--store', str(self.store)],
                                 cwd=self.repo, capture_output=True, encoding='utf-8')
         if ok:
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.returncode, 0, f'{args!r}: {result.stderr}')
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
         return result.stdout + result.stderr
 
-    def export(self, name, **kwargs):
-        return self.cli('export', 'model.xlsx', name, **kwargs)
+    def export(self, name, *args, **kwargs):
+        return self.cli('export', 'model.xlsx', name, *args, **kwargs)
 
     def publish(self, label, reviewed=None, **kwargs):
         approval = reviewed if reviewed is not None else self.preview_digest(label)
@@ -189,6 +260,24 @@ class OnboardingTest(unittest.TestCase):
         self.assertIn('Saved workbook format does not match .XLSX', error)
         self.assertEqual(list(self.store.iterdir()), [])
 
+    def test_export_rejects_store_readable_by_other_users(self):
+        save_fixture(self.book, '2+2')
+        if sys.platform == 'win32':
+            # Grant Everyone read access to this empty synthetic store only.
+            subprocess.run(['icacls.exe', str(self.store), '/grant', '*S-1-1-0:(R)'],
+                           check=True, timeout=30)
+        else:
+            self.store.chmod(0o755)
+        error = self.export('baseline', ok=False)
+        self.assertIn('private store must grant access only to the operator', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_export_rejects_workbook_outside_worktree(self):
+        save_fixture(self.repo.parent / 'outside.xlsx', '2+2')
+        error = self.cli('export', '../outside.xlsx', 'baseline', ok=False)
+        self.assertIn('Use a path relative to the Git worktree root.', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
     def test_saved_blank_xlsx_uses_the_same_initial_acceptance(self):
         save_fixture(self.book, None)
         version = hashlib.sha256(self.book.read_bytes()).hexdigest()
@@ -258,6 +347,151 @@ class OnboardingTest(unittest.TestCase):
         self.assertFalse((self.repo / 'candidate').exists())
         self.assertEqual(list(self.store.iterdir()), [])
         self.assertEqual(self.book.read_bytes(), before)
+
+    def save_query_fixture(self, path, value, *, cell_formula='2+2', connection_id='1', unsafe=False,
+                           refresh_on_load=False, command_query='Loaded Query', copy_metadata=''):
+        save_fixture(path, cell_formula, queries=True, copy_metadata=copy_metadata)
+        package = BytesIO()
+        with ZipFile(package, 'w') as mashup:
+            expression = '"PRIVATE_INLINE_SECRET"' if unsafe else f'#table(type table [N = number], {{{{{value}}}}})'
+            mashup.writestr('Formulas/Section1.m',
+                            f'section Section1;\nshared #"Loaded Query" = {expression};\n'
+                            'shared Staging = let N = 1 in N;\n')
+        payload = b'\0' * 4 + b''.join(struct.pack('<I', len(part)) + part for part in (
+            package.getvalue(), b'private permissions', b'PRIVATE_MASHUP_CACHE', b'user-specific binding'))
+        with ZipFile(path, 'a') as book:
+            book.writestr('customXml/item2.xml', '<DataMashup xmlns="http://schemas.microsoft.com/DataMashup">'
+                          + base64.b64encode(payload).decode('ascii') + '</DataMashup>')
+            book.writestr('xl/connections.xml', f'<connections xmlns="{SHEET}">'
+                          f'<connection id="{connection_id}" name="PRIVATE_CONNECTION_DESCRIPTION" '
+                          f'refreshOnLoad="{int(refresh_on_load)}">'
+                          '<dbPr connection="Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;'
+                          'Location=Loaded Query;Extended Properties=&quot;&quot;;" '
+                          f'command="SELECT * FROM [{command_query}]"/></connection></connections>')
+            book.writestr('xl/queryTables/queryTable1.xml', f'<queryTable xmlns="{SHEET}" connectionId="{connection_id}"/>')
+            book.writestr('xl/tables/_rels/table1.xml.rels', f'<Relationships xmlns="{PACKAGE}">'
+                          f'<Relationship Id="rId1" Type="{OFFICE}/queryTable" Target="../queryTables/queryTable1.xml"/>'
+                          '</Relationships>')
+            book.writestr('xl/tables/table1.xml', f'<table xmlns="{SHEET}" name="Results" ref="D1:D2">'
+                          '<tableColumns count="1"><tableColumn id="1" name="N"/></tableColumns></table>')
+            book.writestr('xl/worksheets/_rels/sheet1.xml.rels', f'<Relationships xmlns="{PACKAGE}">'
+                          f'<Relationship Id="rId1" Type="{OFFICE}/table" Target="../tables/table1.xml"/>'
+                          '</Relationships>')
+
+    def test_power_query_export_separates_editable_m_from_load_inventory(self):
+        self.save_query_fixture(self.book, 1)
+        self.export('baseline', '--power-query')
+        self.publish('baseline')
+        baseline = self.repo / 'baseline'
+        m = json.loads((baseline / 'power-query.json').read_bytes())
+        self.assertEqual(m['queries']['Loaded Query'], '#table(type table [N = number], {{1}})')
+        inventory = json.loads((baseline / 'power-query-inventory.json').read_bytes())
+        self.assertEqual(inventory['connections'], [{'id': '1', 'query': 'Loaded Query'}])
+        self.assertEqual(inventory['worksheetLoads'], [{'connectionId': '1', 'sheet': 'Model',
+                                                         'table': 'Results', 'range': 'D1:D2'}])
+        self.assertFalse(inventory['hasDataModel'])
+        for artifact in baseline.iterdir():
+            self.assertNotIn(b'PRIVATE_', artifact.read_bytes())
+            self.assertNotIn(b'Provider=', artifact.read_bytes())
+
+    def test_power_query_export_blocks_unreviewable_inline_text(self):
+        self.save_query_fixture(self.book, 1, unsafe=True)
+        error = self.export('bad', '--power-query', ok=False)
+        self.assertIn('inline text in M', error)
+        self.assertNotIn('PRIVATE_INLINE_SECRET', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+        self.export('formulas')
+        self.publish('formulas')
+        self.assertFalse((self.repo / 'formulas/power-query.json').exists())
+
+    def test_power_query_import_verifies_a_separate_copy_without_advancing_sync(self):
+        candidate = self.store / 'candidates/attempt/workbook.xlsx'
+
+        def metadata(folder, digit, *, revision=0):
+            path = ''
+            if sys.platform == 'win32':
+                path = ('<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+                        '<mc:Choice Requires="x15"><x15ac:absPath '
+                        'xmlns:x15ac="http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac" '
+                        f'url="{escape(str(folder))}\\"/></mc:Choice></mc:AlternateContent>')
+            guid = f'{digit * 8}-{digit * 4}-{digit * 4}-{digit * 4}-{digit * 12}'
+            return path + ('<xr:revisionPtr xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" '
+                           f'revIDLastSave="{revision}" documentId="13_ncr:1_{{{guid}}}"/>')
+
+        self.save_query_fixture(self.book, 1, copy_metadata=metadata(self.repo, '1'))
+        self.export('baseline', '--power-query')
+        self.publish('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
+        sync = (self.store / 'sync.json').read_bytes()
+        base = self.book.read_bytes()
+        source = (self.repo / 'baseline/power-query.json').read_bytes()
+        (self.repo / 'proposed.json').write_bytes(source.replace(b'{{1}}', b'{{2}}'))
+        args = ('baseline', 'proposed.json', 'attempt', '--qualified-route', 'synthetic-test-only')
+        plan = json.loads(self.cli('pq-plan', *args))
+        self.assertEqual(plan['query'], 'Loaded Query')
+        self.assertEqual(plan['baseSha256'], hashlib.sha256(base).hexdigest())
+        self.assertFalse(candidate.parent.exists())
+        error = self.cli('pq-prepare', *args, '--approved-plan', '0' * 64, ok=False)
+        self.assertIn('approved plan', error)
+        self.assertFalse(candidate.parent.exists())
+        approval = ('--approved-plan', plan['planSha256'])
+        evidence = ('--save-evidence', 'simulated-save', '--reopen-evidence', 'simulated-reopen')
+        self.assertIn('No matching preparation receipt', self.cli(
+            'pq-verify', *args, *approval, *evidence, '--reopened-sha256', '0' * 64, ok=False))
+        self.cli('pq-prepare', *args, *approval)
+        self.assertEqual(candidate.read_bytes(), base)
+
+        # Simulate the route's saved result. This does not qualify a desktop runtime.
+        cases = [(metadata(candidate.parent, '2'), {'connection_id': '2'}, 'load wiring'),
+                 (metadata(candidate.parent, '2'), {'cell_formula': '2+3'}, 'adjacent workbook parts'),
+                 (metadata(candidate.parent, '2', revision=1), {}, 'adjacent workbook parts')]
+        if sys.platform == 'win32':
+            cases.append((metadata(candidate.parent.parent, '2'), {}, 'adjacent workbook parts'))
+        cases.append((metadata(candidate.parent, '2'), {}, ''))
+        for workbook_metadata, change, expected in cases:
+            self.save_query_fixture(candidate, 2, copy_metadata=workbook_metadata, **change)
+            reopened = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            message = self.cli('pq-verify', *args, *approval, *evidence, '--reopened-sha256', reopened, ok=not expected)
+            if expected:
+                self.assertIn(expected, message)
+                self.assertFalse((self.store / 'review/attempt').exists())
+        self.assertEqual((self.store / 'review/attempt/power-query.json').read_bytes(),
+                         (self.repo / 'proposed.json').read_bytes())
+        self.assertEqual((self.store / 'review/attempt/power-query-inventory.json').read_bytes(),
+                         (self.repo / 'baseline/power-query-inventory.json').read_bytes())
+        manifest = json.loads((self.store / 'review/attempt/manifest.json').read_bytes())
+        expected_metadata = ['revisionPtr.documentId']
+        if sys.platform == 'win32':
+            expected_metadata.insert(0, 'absPath.url')
+        self.assertEqual(manifest['excelSaveMetadataChanges'], expected_metadata)
+        self.assertEqual(manifest['operatorAttestations']['reopen'], 'simulated-reopen')
+        self.assertEqual(self.book.read_bytes(), base)
+        self.assertEqual((self.store / 'sync.json').read_bytes(), sync)
+
+    def test_power_query_plan_blocks_inventory_new_queries_and_two_sided_drift(self):
+        self.save_query_fixture(self.book, 1)
+        self.export('baseline', '--power-query')
+        self.publish('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
+        args = ('attempt', '--qualified-route', 'synthetic-test-only')
+        error = self.cli('pq-plan', 'baseline', 'baseline/power-query-inventory.json', *args, ok=False)
+        self.assertIn('not an inventory', error)
+        proposed = self.repo / 'proposed.json'
+        edit = (self.repo / 'baseline/power-query.json').read_bytes().replace(b'{{1}}', b'{{2}}')
+        proposed.write_bytes(edit.replace(b'"Staging"', b'"Created Query"'))
+        error = self.cli('pq-plan', 'baseline', proposed.name, *args, ok=False)
+        self.assertIn('does not create, rename, or remove queries', error)
+        proposed.write_bytes(edit.replace(b'{{2}}', b'{{1}}').replace(b'N = 1 in N', b'N = 2 in N'))
+        self.assertIn('verified worksheet load', self.cli('pq-plan', 'baseline', proposed.name, *args, ok=False))
+        proposed.write_bytes(edit)
+        plan = ('pq-plan', 'baseline', proposed.name, *args)
+        self.save_query_fixture(self.book, 1, refresh_on_load=True)
+        self.assertIn('unsafe opening effects', self.cli(*plan, ok=False))
+        self.save_query_fixture(self.book, 1, command_query='Staging')
+        self.assertIn('unknown connections', self.cli(*plan, ok=False))
+        self.save_query_fixture(self.book, 3)
+        self.assertIn('Managed drift', self.cli(*plan, ok=False))
+        self.assertFalse((self.store / 'candidates').exists())
 
     def test_acceptance_rejects_changed_artifacts_and_is_write_once(self):
         save_fixture(self.book, '2+2')

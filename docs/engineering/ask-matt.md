@@ -28,7 +28,7 @@ The tracker-dependent routes (triage, `to-spec`, `to-tickets`, `implement`) assu
 
 The skill's leading word is **flow**, a path *through* the skills rather than a single skill. When you name your situation, the router places you at a step on a flow. That is a different answer from "here is the skill that matches your keywords". There are five kinds of route, and the skill itself describes them in full:
 
-- **The main flow**, idea to ship. Grill, spec, tickets, implement (one ticket at a time, or the whole task graph in parallel with [implement-spec](https://aihero.dev/skills-implement-spec)), review, then [retro](https://aihero.dev/skills-retro), which feeds what the build taught back into the agent's environment. It has two branches. One is a prototype detour, for when a question needs runnable code to settle it. The other is the spec-and-tickets split, which is only worth its cost when the build spans more than one session.
+- **The main flow**, idea to ship. Grill, spec, tickets, implement (one issue at a time, or coordinate the graph with [implement-spec](https://aihero.dev/skills-implement-spec)), review, then [retro](https://aihero.dev/skills-retro), which feeds what the build taught back into the agent's environment. For graph execution, Kilo VS Code uses separate, human-merged PRs; other hosts use one integration branch. Prototype first when a question needs runnable code to settle it. The spec-and-tickets split is only worth its cost when the build spans more than one session.
 - **On-ramps**, for a situation that generates work and then merges onto the main flow: incoming bug reports, something broken, or an effort too foggy and too large to hold in one session.
 - **Codebase health**, upkeep rather than feature work. [improve-codebase-architecture](https://aihero.dev/skills-improve-codebase-architecture) surveys the code for deepening opportunities, and each one it finds re-enters the main flow as an idea.
 - **Standalones**, which sit off every flow and which you use on their own: the prototype, the questionnaire, the research run.
@@ -87,6 +87,9 @@ Check the changelog for a rename before assuming it is gone. `writing-great-skil
 - You recognise your own situation in what it hands back, rather than the nearest generic scenario.
 
 ## Where it fits
+
+- To pass the same assignment and its write scope to a fresh Kilo VS Code session in the same checkout, use [kilo-handoff](https://aihero.dev/skills-kilo-handoff).
+- To start a Kilo VS Code Agent Manager session without transferring write ownership, use [spawn](https://aihero.dev/skills-spawn). It checks uncertain starts before trying again and can isolate an assignment in its own worktree.
 
 `ask-matt` is a **standalone router** that sits over the whole set. It is never a step in a chain. It points into every chain, and the other docs pages link back to it so none of them has to redraw the graph. From here you most often land on [grill-with-docs](https://aihero.dev/skills-grill-with-docs), the head of the main flow, or [triage](https://aihero.dev/skills-triage), the on-ramp for work that arrived rather than work you started.
 
