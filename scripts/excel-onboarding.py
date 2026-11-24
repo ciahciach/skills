@@ -59,7 +59,7 @@ Only exact A1 targets of standalone ordinary formulas are editable here. The
 inventory summarizes omissions, not instructions. No values, cached formula
 results, connection strings or names' definitions are emitted. Saved Power
 Query M and its inventory are separate artifacts for the restricted pilot
-profile; see the Excel repo contract for pq-plan, pq-prepare and pq-verify.
+profile; see the Excel repo contract for the M import and manual load workflows.
 Shared and array formula records, spill ranges, what-if data tables,
 and table-calculated columns are out of scope. Nonempty inline strings,
 recognized credential patterns and external formula references block the export.
@@ -74,7 +74,7 @@ fresh synthetic workbooks in a private attempt directory.
 
 import argparse
 from collections import Counter
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
 import hashlib
 from io import BytesIO, StringIO, TextIOWrapper
@@ -132,6 +132,8 @@ class QuerySnapshot:
     metadata: tuple[str, dict[str, bytes], bytes, bytes]
     wiring: dict
     risky_open: bool
+    load_parts: dict[tuple[str, str], tuple[str, str]]
+    table_ranges: dict[str, dict[str, str]]
 
 
 def refresh_on_load(node):
@@ -336,6 +338,8 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False):
             return [], {}, None
         mashup = read_mashup(book, CREDENTIAL, min(MAX_XML, remaining)) if power_query else None
         loads = []
+        load_parts: dict[tuple[str, str], tuple[str, str]] = {}
+        table_ranges: dict[str, dict[str, str]] = {}
         query_tables = set()
         risky_open = (bool(vba_projects) or any(row.get('TargetMode') == 'External' for row in links.values())
                       or any('macrosheet' in row.get('Type', '').lower() for row in links.values())
@@ -372,6 +376,7 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False):
                 if definition.tag != f'{S}table' or len(columns) != right - left + 1:
                     raise Blocked('Unsupported table structure.')
                 if mashup is not None:
+                    table_ranges.setdefault(name, {})[table_part] = definition.attrib['ref']
                     for link in relationships(table_part).values():
                         if link.get('Type') != f'{OFFICE}/queryTable':
                             continue
@@ -380,6 +385,10 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False):
                         if query_part in query_tables or query_table.tag != f'{S}queryTable':
                             raise Blocked('Unsupported query table mapping.')
                         query_tables.add(query_part)
+                        key = (name, definition.attrib['name'])
+                        if key in load_parts:
+                            raise Blocked('Ambiguous worksheet load table.')
+                        load_parts[key] = (sheet_part, table_part)
                         risky_open |= refresh_on_load(query_table)
                         loads.append({'connectionId': query_table.attrib['connectionId'], 'sheet': name,
                                       'table': definition.attrib['name'], 'range': definition.attrib['ref']})
@@ -462,7 +471,8 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False):
             wiring = {'kind': 'inventory-only', 'hasDataModel': has_model,
                       'connections': sorted(connections, key=lambda row: int(row['id'])),
                       'worksheetLoads': sorted(loads, key=lambda row: (row['sheet'], row['table']))}
-            query_snapshot = QuerySnapshot(mashup_part, part, queries, preservation, wiring, risky_open)
+            query_snapshot = QuerySnapshot(mashup_part, part, queries, preservation, wiring, risky_open,
+                                           load_parts, table_ranges)
 
     inventory = {'kind': 'inventory-only', 'sheets': sheets,
                  'definedNames': len(workbook.findall(f'{S}definedNames/{S}definedName')),
@@ -785,8 +795,235 @@ def checked_query_snapshot(data):
     if snapshot is None:
         raise Blocked('No supported saved Power Query M was found.')
     if snapshot.wiring['hasDataModel'] or snapshot.risky_open:
-        raise Blocked('Data Model, unknown connections, or unsafe opening effects are outside the M pilot.')
+        raise Blocked('Data Model, unknown connections, or unsafe opening effects are outside the Power Query pilot.')
     return snapshot
+
+
+def verify_load_move(data, result, before: QuerySnapshot, after: QuerySnapshot, query, destination, folder):
+    if query not in before.queries:
+        raise Blocked('The intended query is not in the approved baseline.')
+    ids = {row['id'] for row in before.wiring['connections'] if row['query'] == query}
+    loads = [row for row in before.wiring['worksheetLoads'] if row['connectionId'] in ids]
+    if len(ids) != 1 or len(loads) != 1:
+        raise Blocked('The load pilot requires exactly one mapped worksheet table for the query.')
+    old, = loads
+    expected = {**before.wiring, 'worksheetLoads': [
+        {**row, 'range': destination} if row == old else row for row in before.wiring['worksheetLoads']]}
+    left, top, right, bottom = rectangle(old['range'])
+    new_left, new_top, new_right, new_bottom = rectangle(destination)
+    if ((top, bottom, right - left) != (new_top, new_bottom, new_right - new_left)
+            or not (new_right < left or right < new_left)):
+        raise Blocked('The new range must be disjoint, same-size, and on the same rows of the same sheet.')
+    if after.wiring != expected or before.load_parts != after.load_parts:
+        raise Blocked('Saved load wiring does not match the intended move.')
+
+    sheet, table = before.load_parts[old['sheet'], old['table']]
+
+    def overlaps_destination(reference):
+        x1, y1, x2, y2 = rectangle(reference)
+        return x1 <= new_right and new_left <= x2 and y1 <= bottom and top <= y2
+
+    if any(overlaps_destination(ref) for part, ref in before.table_ranges[old['sheet']].items() if part != table):
+        raise Blocked('The new range intersects another table.')
+    old_parts = preserved_parts(data, None)
+    new_parts = preserved_parts(result, None)
+    for part in (sheet, table):
+        del old_parts[part], new_parts[part]
+    if before.workbook_part == after.workbook_part == 'xl/workbook.xml':
+        if old_parts.pop('xl/workbook.xml') != new_parts.pop('xl/workbook.xml'):
+            if excel_copy_metadata_changes(data, result, folder) is None:
+                raise Blocked('Could not verify preservation of the workbook document.')
+    if old_parts != new_parts:
+        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+
+    def normalize(package, moved):
+        def xml(book, part):
+            raw = book.read(part).decode('utf-8-sig')
+            if '\0' in raw or '<!' in raw:
+                raise Blocked('Unsupported XML in moved table or worksheet.')
+            # Keep namespace bindings and processing instructions in the preservation check.
+            events = ET.iterparse(StringIO(raw), events=('start', 'end', 'start-ns', 'end-ns', 'pi'))
+            position = 0
+            metadata = []
+            document = None
+            for event, item in events:
+                if event in ('start', 'end'):
+                    position += 1
+                    if document is None and event == 'start':
+                        document = item
+                else:
+                    metadata.append((position, event, ET.tostring(item) if event == 'pi' else item))
+            return document, metadata
+
+        with ZipFile(BytesIO(package)) as book:
+            definition, table_metadata = xml(book, table)
+            worksheet, sheet_metadata = xml(book, sheet)
+        expected_range = destination if moved else old['range']
+        for node in definition.findall(f'{S}autoFilter'):
+            if node.get('ref') != expected_range:
+                raise Blocked('The table filter range does not match its load range.')
+            node.set('ref', old['range'])
+        if moved:
+            definition.set('ref', old['range'])
+        if any(overlaps_destination(node.attrib['ref']) for node in worksheet.findall(f'{S}mergeCells/{S}mergeCell')):
+            raise Blocked('The new range intersects merged cells.')
+        offset = new_left - left
+        occupied = set()
+        for row in worksheet.findall(f'{S}sheetData/{S}row'):
+            cells = row.findall(f'{S}c')
+            for cell in cells:
+                address = cell.attrib['r']
+                x, y = coordinates(address)
+                if address in occupied or int(row.attrib['r']) != y:
+                    raise Blocked('Unsupported worksheet cell layout.')
+                occupied.add(address)
+                formula = cell.find(f'{S}f')
+                if formula is not None and 'ref' in formula.attrib and overlaps_destination(formula.attrib['ref']):
+                    raise Blocked('The new range intersects a reserved formula range.')
+                if not top <= y <= bottom:
+                    continue
+                empty_left, empty_right = (left, right) if moved else (new_left, new_right)
+                if empty_left <= x <= empty_right:
+                    raise Blocked('The old range after the move and the new range before it must be empty.')
+                if (new_left <= x <= new_right if moved else left <= x <= right):
+                    if formula is not None:
+                        raise Blocked('Formulas in moved cells are outside the load pilot.')
+                    if moved:
+                        col, label = x - offset, ''
+                        while col:
+                            col, digit = divmod(col - 1, 26)
+                            label = chr(65 + digit) + label
+                        cell.set('r', f'{label}{y}')
+            if cells:
+                if len(cells) != len(row):
+                    raise Blocked('Unsupported worksheet row structure.')
+                row[:] = sorted(cells, key=lambda cell: coordinates(cell.attrib['r']))
+        return ET.tostring(definition), ET.tostring(worksheet), table_metadata, sheet_metadata
+
+    if normalize(data, False) != normalize(result, True):
+        raise Blocked('Could not verify preservation of the table and worksheet outside the intended move.')
+    return old
+
+
+def power_query_load_change(root, store, args):
+    sync_file = store / 'sync.json'
+    lock = store / 'load-accept.lock'
+    require_private(store, sync_file, lock)
+    sync_bytes = read_bounded(sync_file, MAX_XML)
+    sync = json.loads(sync_bytes)
+    meta, artifacts = verified_export(root, store, repo_path(root, args.baseline), sync['manifestSha256'])
+    if ('power-query-inventory.json' not in artifacts or Path(meta['workbook']).suffix.lower() != '.xlsx'
+            or any(sync.get(key) != meta[key] for key in ('schema', 'workbook', 'versionSha256'))):
+        raise Blocked('Use the approved Power Query XLSX baseline.')
+    source = workbook_path(root, meta['workbook'], None)
+    candidate = workbook_path(root, args.copy, None)
+    output = repo_path(root, args.destination)
+    if (candidate.suffix.lower() != '.xlsx' or source.samefile(candidate)
+            or git(root, 'check-ignore', '--quiet', '--', args.copy).returncode != 0):
+        raise Blocked('Use a separate Git-ignored XLSX working copy.')
+    if output.exists() or not output.parent.is_dir():
+        raise Blocked('Choose a new export directory under an existing parent.')
+    if CREDENTIAL.search(args.destination):
+        raise Blocked('Publication blocked: possible credential in the export path.')
+    for evidence in (args.qualified_route, args.save_evidence, args.reopen_evidence):
+        if not EVIDENCE_REF.fullmatch(evidence) or CREDENTIAL.search(evidence):
+            raise Blocked('Supply safe references for qualified route, save and independent reopen evidence.')
+    if args.save_evidence == args.reopen_evidence:
+        raise Blocked('Save and independent reopen require separate evidence references.')
+    data = read_bounded(source, MAX_PACKAGE)
+    if sha(data) != sync['versionSha256']:
+        raise Blocked('The original workbook differs from the approved baseline.')
+    result = read_bounded(candidate, MAX_PACKAGE)
+    version = sha(result)
+    if version != args.reopened_sha256 or version == sync['versionSha256']:
+        raise Blocked('Independent reopen must attest the exact changed candidate checksum.')
+    before, after = checked_query_snapshot(data), checked_query_snapshot(result)
+    old = verify_load_move(data, result, before, after, args.query, args.to, candidate.parent)
+    exported = build_export(result, candidate.relative_to(root).as_posix(), power_query=True)
+    review = {'kind': 'power-query-manual-load-review', 'syncSha256': sha(sync_bytes),
+              'manifestSha256': sha(exported['manifest.json']), 'candidateSha256': version,
+              'exportDestination': output.relative_to(root).as_posix(),
+              'change': {'query': args.query, 'from': old, 'to': {**old, 'range': args.to}},
+              'before': before.wiring, 'after': after.wiring,
+              'operatorAttestations': {'route': args.qualified_route, 'save': args.save_evidence,
+                                       'reopen': args.reopen_evidence},
+              'dataAccessOrRefreshByCli': False}
+    digest = sha(json_bytes(review))
+    if args.command == 'pq-load-review':
+        print(json_bytes({**review, 'reviewSha256': digest}).decode('utf-8'), end='')
+        return
+    if args.accepted != digest:
+        raise Blocked('The accepted review checksum does not match the current inputs.')
+
+    retained = store / 'versions' / f'{version}.xlsx'
+    receipt = retained.parent / f'{digest}.load-review.json'
+    require_private(store, retained.parent, retained, receipt)
+    next_sync = json_bytes({'schema': 1, 'workbook': candidate.relative_to(root).as_posix(),
+                            'versionSha256': version, 'manifestSha256': review['manifestSha256']})
+    # Serialize acceptance. The sync pointer is the final commit, not the presence of an export.
+    lock.mkdir(mode=0o700)
+    created = []
+    published = committed = False
+    pending = lock / 'sync.json'
+    try:
+        if not retained.exists():
+            write_once(retained, result)
+            created.append(retained)
+        retained_bytes(retained, version)
+        evidence = json_bytes({**review, 'reviewSha256': digest})
+        if not receipt.exists():
+            write_once(receipt, evidence)
+            created.append(receipt)
+        retained_bytes(receipt, sha(evidence))
+        write_export(output, exported)
+        published = True
+        write_once(pending, next_sync)
+        with ExitStack() as handles:
+            if os.name == 'nt':
+                import ctypes
+                from ctypes import wintypes
+
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)  # type: ignore[attr-defined]
+                open_file = kernel.CreateFileW
+                open_file.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                      wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+                open_file.restype = wintypes.HANDLE
+                kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+                for path in (source, candidate):
+                    # GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING: deny writes and replacement until commit.
+                    handle = open_file(str(path), 0x80000000, 1, None, 3, 0, None)
+                    if handle == ctypes.c_void_p(-1).value:
+                        raise Blocked('Could not hold a read-only workbook handle through acceptance.')
+                    handles.callback(kernel.CloseHandle, handle)
+            if (read_bounded(sync_file, MAX_XML) != sync_bytes
+                    or read_bounded(workbook_path(root, meta['workbook'], None), MAX_PACKAGE) != data
+                    or read_bounded(workbook_path(root, args.copy, None), MAX_PACKAGE) != result):
+                raise Blocked('Inputs changed during acceptance.')
+            if os.name == 'nt':
+                sync_file.chmod(stat.S_IWRITE | stat.S_IRUSR)
+            pending.replace(sync_file)
+            committed = True
+    except BaseException:
+        if read_bounded(sync_file, MAX_XML) != next_sync:
+            if os.name == 'nt':
+                sync_file.chmod(stat.S_IRUSR)
+            if published:
+                shutil.rmtree(output)
+            for path in created:
+                path.chmod(stat.S_IWRITE | stat.S_IRUSR)
+                path.unlink()
+        raise
+    finally:
+        try:
+            if pending.exists():
+                pending.chmod(stat.S_IWRITE | stat.S_IRUSR)
+                pending.unlink()
+            lock.rmdir()
+        except OSError:
+            if not committed:
+                raise
+            print('Acceptance committed; inspect the stale acceptance lock before another attempt.', file=sys.stderr)
+    print('Accepted the verified copy and advanced the synchronization point.')
 
 
 def unique_json_object(pairs):
@@ -1137,7 +1374,21 @@ def main():
                             help='Attest independent desktop readback of the exact saved candidate bytes.')
     verify_cmd.add_argument('--save-evidence', required=True, help='Reference to the operator record of desktop save.')
     verify_cmd.add_argument('--reopen-evidence', required=True, help='Reference to independent desktop reopen evidence.')
-    for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd, plan_cmd, prepare_cmd, verify_cmd):
+    load_review = commands.add_parser('pq-load-review', help='Review a manually moved query table without writing.')
+    load_accept = commands.add_parser('pq-load-accept', help='Accept the exact reviewed load move as the new baseline.')
+    for command in (load_review, load_accept):
+        command.add_argument('baseline', help='Published export at the approved synchronization point.')
+        command.add_argument('copy', help='Separate Git-ignored XLSX, manually changed and independently reopened.')
+        command.add_argument('destination', help='New worktree-relative directory for the accepted export.')
+        command.add_argument('--query', required=True, help='Existing query whose worksheet table was moved.')
+        command.add_argument('--to', required=True, help='Intended new A1 range in the same sheet.')
+        command.add_argument('--qualified-route', required=True)
+        command.add_argument('--save-evidence', required=True)
+        command.add_argument('--reopen-evidence', required=True)
+        command.add_argument('--reopened-sha256', required=True)
+    load_accept.add_argument('--accepted', required=True, help='SHA-256 of the review you explicitly accept.')
+    for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd, plan_cmd, prepare_cmd, verify_cmd,
+                    load_review, load_accept):
         command.add_argument('--store', required=True, help='Existing private, access-controlled directory outside Git.')
     pilot = commands.add_parser('pq-pilot', help='Run the disposable native Power Query pilot on Windows.')
     pilot.add_argument('--desktop', action='store_true', help='Authorize Excel to create a fresh synthetic fixture.')
@@ -1162,6 +1413,8 @@ def main():
             print('Published the reviewed export. No Git staging or synchronization performed.')
         elif args.command == 'accept-initial':
             accept_initial(root, store, args.candidate, args.reviewed)
+        elif args.command in ('pq-load-review', 'pq-load-accept'):
+            power_query_load_change(root, store, args)
         else:
             power_query_import(root, store, args)
     except (Blocked, QueryBlocked) as error:
