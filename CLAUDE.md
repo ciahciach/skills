@@ -28,6 +28,10 @@ Every skill that dispatches a subagent says to start it with a fresh context win
 
 ## Agent skills
 
+### Issue tracker
+
+Issues live in `ciahciach/skills`. See [GitHub issue tracker](./skills/engineering/setup-matt-pocock-skills/issue-tracker-github.md) for tracker and Wayfinding operations. Use `--repo ciahciach/skills` to target this fork explicitly.
+
 ### Triage labels
 
 Canonical names, unchanged. See `docs/agents/triage-labels.md`. Issues are judged against [`SCOPE.md`](./SCOPE.md).
