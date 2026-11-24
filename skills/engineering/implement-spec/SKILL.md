@@ -1,10 +1,12 @@
 ---
 name: implement-spec
-description: "Implement the result of /to-spec and /to-tickets in code."
+description: "Implement a spec's issue graph: separate PRs in Kilo VS Code, one integration branch on other hosts."
 disable-model-invocation: true
 ---
 
 You have been provided a spec. This spec should have tickets associated with it, describing how to implement the spec.
+
+**Choose the host profile first.** In Kilo VS Code, read [KILO-VSCODE.md](KILO-VSCODE.md) and follow it **instead of** the integration-branch workflow below. If a required Kilo capability is missing, report the blocker; do not fall back to the workflow below. On other hosts, continue below.
 
 The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
 

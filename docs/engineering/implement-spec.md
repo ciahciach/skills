@@ -1,8 +1,11 @@
 ## What it does
 
-`implement-spec` takes a [spec](https://www.aihero.dev/ai-coding-dictionary/spec) and its [tickets](https://www.aihero.dev/ai-coding-dictionary/ticket) and lands the whole thing in one run. The orchestrating [agent](https://www.aihero.dev/ai-coding-dictionary/agent) hands each ticket to an implementer [subagent](https://www.aihero.dev/ai-coding-dictionary/subagent) working in its own git worktree, merges each finished branch into a single **integration branch**, runs [code-review](https://aihero.dev/skills-code-review) over the result, and resolves the tickets.
+`implement-spec` coordinates a [spec](https://www.aihero.dev/ai-coding-dictionary/spec) split into implementation issues. It reads them as a **task graph**, not a list: the **frontier** is the work whose blockers have landed. The host profile determines how work lands:
 
-It reads the tickets as a **task graph**, not a list. Blocking edges decide what can start, so at any moment there is a **frontier** of tickets whose blockers have all landed, and every ticket on the frontier runs at once. That is the difference from working the tickets one by one. The graph's shape sets the pace, not the tickets' order on the tracker.
+| Host | Landing model |
+| --- | --- |
+| Kilo VS Code | The coordinating [agent](https://www.aihero.dev/ai-coding-dictionary/agent) uses `spawn` for isolated Agent Manager sessions. Each issue gets its own PR; a human merges it. |
+| Other hosts | Implementer [subagents](https://www.aihero.dev/ai-coding-dictionary/subagent) work across the frontier and land on one **integration branch**, with [code-review](https://aihero.dev/skills-code-review) over the result. |
 
 ## When to reach for it
 
@@ -10,18 +13,24 @@ You invoke this by typing `/implement-spec`, and the agent won't reach for it on
 
 | Your situation | Reach for |
 | --- | --- |
-| A spec, split into tickets with blocking edges, that you want landed in one run | `/implement-spec` |
+| Kilo VS Code: a closed list of issues to coordinate with separate PRs | `/implement-spec` with the issue list and agreed base |
+| Other hosts: a spec with blocking edges to land on one integration branch | `/implement-spec` with the spec pointer |
 | One ticket at a time, in your own [context window](https://www.aihero.dev/ai-coding-dictionary/context-window), [clearing](https://www.aihero.dev/ai-coding-dictionary/clearing) between tickets | [implement](https://aihero.dev/skills-implement) |
 | A spec that isn't split into tickets yet | [to-tickets](https://aihero.dev/skills-to-tickets) first |
 | A small piece of work with no real graph to it | [implement](https://aihero.dev/skills-implement) directly |
 
 ## Prerequisites
 
-- **An issue tracker.** The skill reads the tickets from, and resolves them on, the tracker [setup-matt-pocock-skills](https://aihero.dev/skills-setup-matt-pocock-skills) configured. If none has been configured, it stops and tells you to run that first rather than guessing.
-- **Tickets with blocking edges**, as [to-tickets](https://aihero.dev/skills-to-tickets) writes them. Without edges the graph is flat and every ticket starts at once.
-- **A [harness](https://www.aihero.dev/ai-coding-dictionary/harness) that runs subagents in the background and gives each one a git worktree.** The skill exists to run tickets at the same time, so on a harness that runs subagents one at a time, it is only a slower `implement`.
+- **An issue tracker.** The skill reads the issues from the tracker [setup-matt-pocock-skills](https://aihero.dev/skills-setup-matt-pocock-skills) configured. If none has been configured, it stops and tells you to run that first rather than guessing.
+- **Issues with blocking edges**, as [to-tickets](https://aihero.dev/skills-to-tickets) writes them. Without edges the graph is flat, but Kilo still applies its execution limit.
+- **Kilo VS Code:** Agent Manager, an explicit commission covering a closed issue list and worktree starts, an agreed base, and a tracker with verifiable PR merges.
+- **Other hosts:** A [harness](https://www.aihero.dev/ai-coding-dictionary/harness) that runs subagents in the background and gives each one a git worktree.
 
-## The integration branch
+## The Kilo Frontier
+
+In Kilo VS Code, invoke `/implement-spec` with the spec, the exact issues to execute, the target base, and any override to the default of three active execution slots. Specify whether workers may commit, push, and open PRs. The coordinator distinguishes a queued prompt from actual work and a finished worker from a merged issue. A ready PR or green CI cannot unlock dependent work. After a verified human merge it refills the frontier without waiting for an entire wave. An integration branch is a separately agreed exception.
+
+## The Integration Branch on Other Hosts
 
 Everything lands on one branch. Each implementer:
 
@@ -35,13 +44,23 @@ Implementers talk to the orchestrator through [context pointers](https://www.aih
 
 ## Common questions
 
-**How is this different from running `/implement` on each ticket myself?**
+**What happens while Kilo waits for a human or a merge?**
 
-This is the question the skill exists to answer. Before it shipped, people kept building their own versions, and one user described the need: they wanted "subagents implement the tickets" instead of having "to individually create new session and tell them to implement a ticket one by one, when a spec may contain over 5 tickets." With `implement` you are the dispatcher: one [session](https://www.aihero.dev/ai-coding-dictionary/session) per ticket, clearing in between, and keeping track yourself of which tickets are unblocked. `implement-spec` hands that job to one orchestrating session. The price is that you no longer read each ticket's work as it lands; you review the integration branch at the end. To start a run, clear the context and type `/implement-spec` with a pointer to the spec (an issue number or a file path). For a small change with no real graph, skip it and use `implement` directly.
+`HITL wymagany` identifies the native question, permission or merge that needs human action. Independent work can continue. The coordinator returns on a verifiable notification or a scheduled recheck; if neither is available, it reports that automatic continuation is unavailable. Sessions, worktrees and branches stay in place for separate cleanup.
+
+The questions below about the integration branch and whole-spec review describe the other-host profile. Kilo reviews each candidate before commit and reviews changes together when they affect a shared contract or accumulate risk. A PR awaiting required combined review stays unpublished or in draft. If review on an open PR becomes stale:
+
+- **Authorized to change PR status:** The coordinator returns the PR to draft.
+- **Not authorized:** The coordinator asks the human to hold the merge.
+
+**How is this different from running `/implement` on each issue myself?**
+
+With `implement` you are the dispatcher: one [session](https://www.aihero.dev/ai-coding-dictionary/session) per issue, clearing in between and keeping track of what is unblocked. `implement-spec` hands dispatch to one coordinator. In Kilo VS Code you explicitly commission the issue list and worktree starts, and still own every merge. On other hosts you start with a spec pointer and review the integration branch at the end. For a small change with no real graph, use `implement` directly.
 
 **Does it need GitHub? I want it to stop at the branch.**
 
-No, not any more. One user who liked the in-progress version had exactly this complaint: "it creates a PR at the end, which requires an online repository like GitHub. I wish it could do the same work offline and stop at the branch where all the work is merged." The run now ends on the integration branch. A PR opens only when the configured tracker closes work through PRs or you ask for one, so on a local markdown tracker the run ends with every ticket resolved and the work merged on the branch.
+- **Kilo VS Code:** The tracker must provide verifiable PR merges. A local branch on its own cannot unlock dependencies.
+- **Other hosts:** The workflow can run offline and stop at the integration branch. A PR opens only when the configured tracker closes work through PRs or you ask for one.
 
 **Its review and fix loop ran for hours, or kept "fixing" tickets that hadn't been built yet.**
 
@@ -69,11 +88,15 @@ A worktree holds only what git tracks. Tests that read gitignored fixtures, loca
 
 ## It's working if
 
-- Several implementers are running at once whenever the graph allows, not one after another.
-- A ticket starts as soon as its last blocker lands on the integration branch, not when the whole run ends.
-- Every ticket's trace shows `tdd` running, with a failing test before the code.
+- Several implementers are running at once whenever the graph and host allow.
+- In Kilo VS Code, a dependent issue starts only after the last verified human merge. Each PR shows review evidence for its published diff.
+
+On other hosts:
+
+- An issue starts as soon as its last blocker lands on the integration branch, not when the whole run ends.
+- Every issue's trace shows `tdd` running, with a failing test before the code.
 - Merges into the integration branch are fast-forwards, not conflict resolutions.
-- The run ends on one branch with every ticket resolved, and a PR only if your tracker wanted one.
+- The run ends on one branch with every issue resolved, and a PR only if your tracker wanted one.
 
 ## Where it fits
 
@@ -83,4 +106,4 @@ A worktree holds only what git tracks. Tests that read gitignored fixtures, loca
 grill-with-docs → to-spec → to-tickets → implement-spec → retro
 ```
 
-Its neighbours are [to-tickets](https://aihero.dev/skills-to-tickets), which declares the blocking edges it reads as a task graph, and [code-review](https://aihero.dev/skills-code-review), which it runs over the integration branch before closing out. [ask-matt](https://aihero.dev/skills-ask-matt) is the router over the whole set when you are not sure which flow you are in.
+Its neighbours are [to-tickets](https://aihero.dev/skills-to-tickets), which declares blocking edges, and [code-review](https://aihero.dev/skills-code-review), which checks the candidate PR diff in Kilo VS Code or the integration branch on other hosts. [ask-matt](https://aihero.dev/skills-ask-matt) routes between workflows.
