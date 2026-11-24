@@ -23,6 +23,55 @@ PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 
 class NativePilotTest(unittest.TestCase):
+    def test_formula_import_preserves_only_empty_desktop_style_defaults(self):
+        cli = runpy.run_path(str(SCRIPT))
+        styles = (f'<styleSheet xmlns="{SHEET}"><extLst>'
+                  '<ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}">'
+                  '<x14:slicerStyles xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+                  'defaultSlicerStyle="SlicerStyleLight1"/></ext>'
+                  '<ext uri="{9260A510-F301-46a8-8635-F512D64BE5F5}">'
+                  '<x15:timelineStyles xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" '
+                  'defaultTimelineStyle="TimeSlicerStyleLight1"/></ext></extLst></styleSheet>')
+
+        def preserved(raw):
+            data = BytesIO()
+            with ZipFile(data, 'w') as book:
+                book.writestr('xl/styles.xml', raw)
+            return cli['preservation'](data.getvalue(), {})
+
+        self.assertNotEqual(preserved(styles), preserved(styles.replace('<extLst>', '<extLst><!-- metadata -->')))
+        for changed in (styles.replace('SlicerStyleLight1', 'AnotherStyle'),
+                        styles.replace('"TimeSlicerStyleLight1"/>', '"TimeSlicerStyleLight1"><x15:timelineStyle/>'
+                                       '</x15:timelineStyles>'),
+                        styles.replace('{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}', '{unknown}')):
+            with self.assertRaisesRegex(cli['Blocked'], 'unsupported extensions'):
+                preserved(changed)
+
+    def test_formula_com_metadata_exception_is_edit_only_and_narrow(self):
+        preservation = runpy.run_path(str(SCRIPT))['preservation']
+        chain = (f'<calcChain xmlns="{SHEET}"><c r="C1" i="1" l="1"/>'
+                 '<c r="B1" i="1"/></calcChain>')
+        reversed_chain = chain.replace('C1', '#').replace('B1', 'C1').replace('#', 'B1')
+        workbook = (f'<workbook xmlns="{SHEET}" xmlns:xr="http://schemas.microsoft.com/office/'
+                    'spreadsheetml/2014/revision"><xr:revisionPtr documentId="old" revIDLastSave="0"/></workbook>')
+
+        def package(chain_xml, workbook_xml, label='<label/>', *, edited=False):
+            data = BytesIO()
+            with ZipFile(data, 'w') as book:
+                book.writestr('xl/calcChain.xml', chain_xml)
+                book.writestr('xl/workbook.xml', workbook_xml)
+                book.writestr('docProps/custom.xml', label)
+            return preservation(data.getvalue(), {}, com_fixture_edit=edited)
+
+        rotated = workbook.replace('"old"', '"new"')
+        self.assertNotEqual(package(chain, workbook), package(reversed_chain, rotated))
+        base = package(chain, workbook, edited=True)
+        self.assertEqual(base, package(reversed_chain, rotated, edited=True))
+        self.assertNotEqual(base, package(reversed_chain.replace(' l="1"', ''), rotated, edited=True))
+        self.assertNotEqual(base, package(reversed_chain, rotated.replace('revIDLastSave="0"', 'revIDLastSave="1"'),
+                                          edited=True))
+        self.assertNotEqual(base, package(reversed_chain, rotated, '<label changed="1"/>', edited=True))
+
     def test_first_excel_save_revision_transition_is_narrow(self):
         verify = runpy.run_path(str(SCRIPT))['excel_copy_metadata_changes']
 
@@ -77,7 +126,8 @@ def make_writable(path: Path):
         path.chmod(stat.S_IWRITE | stat.S_IRUSR)
 
 
-def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=False, copy_metadata='', extra_cells=''):
+def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, simple=False,
+                 queries=False, copy_metadata='', extra_cells=''):
     content_type = ('application/vnd.ms-excel.sheet.macroEnabled.main+xml' if macros
                     else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml')
     vba_type = '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' if macros else ''
@@ -108,6 +158,10 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=F
           <row r="7"><c r="A7"><f t="shared" ref="A7:A8" si="0">B7+1</f></c></row>
           <row r="8"><c r="A8"><f t="shared" si="0"/></c></row>
         '''
+        if simple:
+            cached = {'2+2': 4, '2+3': 5, '2+4': 6}[expression]
+            rows = (f'<row r="1"><c r="A1"><f>{escape(expression)}</f><v>{cached}</v></c>'
+                    f'<c r="B1"><v>{data}</v></c><c r="C1"><f>2*2</f><v>4</v></c></row>')
         book.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{SHEET}" xmlns:r="{OFFICE}"><sheetData>{rows}</sheetData>{tables}</worksheet>')
         if macros and not missing_vba:
             book.writestr('xl/vbaProject.bin', b'Synthetic opaque VBA bytes')
@@ -139,6 +193,116 @@ class OnboardingTest(unittest.TestCase):
         (self.repo / 'AGENTS.md').write_text('Prepared fixture. See docs/agents/excel.md.\n', encoding='utf-8')
         (self.repo / 'docs/agents').mkdir(parents=True)
         (self.repo / 'docs/agents/excel.md').write_text(f'Use {SCRIPT} for passive export.\n', encoding='utf-8')
+
+    def import_fixture(self):
+        (self.repo / '.gitignore').write_text('*.xlsx\n', encoding='utf-8')
+        save_fixture(self.book, '2+2', simple=True)
+        self.export('baseline')
+        self.publish('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
+        formulas = self.repo / 'baseline/ordinary-formulas.json'
+        proposal = json.loads(formulas.read_bytes())
+        proposal['cells'] = [{'sheet': 'Model', 'cell': 'A1', 'formula': '=2+3'}]
+        formulas.write_text(json.dumps(proposal), encoding='utf-8')
+        (self.repo / 'baseline/inventory.json').unlink()
+        subprocess.run(['git', 'add', 'baseline'], cwd=self.repo, check=True)
+        subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
+                        'commit', '-qm', 'Approve synthetic formula edit'], cwd=self.repo, check=True)
+        self.commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True).strip()
+        return ['baseline', 'result.xlsx', '--commit', self.commit]
+
+    def simulated_route(self, *, no_op=None, evidence_class='desktop'):
+        # External desktop phases are simulated; this is not runtime qualification.
+        routes = self.store / 'routes'
+        routes.mkdir(mode=0o700, exist_ok=True)
+        original = self.book.read_bytes()
+        no_op = original if no_op is None else no_op
+        receipt = json.dumps({'entryPoint': 'synthetic routing fixture', 'backend': 'fixture backend',
+                              'backendVersion': '1', 'excelBuild': 'fixture build', 'qualification': 'test-only',
+                              'evidenceClass': evidence_class,
+                              'authorization': 'test-only', 'operation': 'ordinary-formula-import',
+                              'profile': 'simple-xlsx', 'inputSha256': hashlib.sha256(original).hexdigest(),
+                              'noOpSha256': hashlib.sha256(no_op).hexdigest(), 'commit': self.commit,
+                              'output': 'result.xlsx'}).encode('utf-8')
+        pin = hashlib.sha256(receipt).hexdigest()
+        for extension, content in (('json', receipt), ('xlsx', no_op)):
+            path = routes / f'{pin}.{extension}'
+            path.touch(mode=0o600)
+            path.write_bytes(content)
+        return ['--route-sha256', pin]
+
+    def test_import_dry_run_is_read_only_and_requires_qualification(self):
+        args = self.import_fixture()
+        before = (self.store / 'sync.json').read_bytes()
+        book = self.book.read_bytes()
+        output = self.cli('plan-import', *args, ok=False)
+        self.assertIn('qualification', output)
+        self.assertIn('=2+3', output)
+        self.assertIn('A1', output)
+        self.assertEqual((self.store / 'sync.json').read_bytes(), before)
+        self.assertEqual(self.book.read_bytes(), book)
+        self.assertFalse((self.repo / 'result.xlsx').exists())
+
+    def test_import_reports_both_diffs_and_rejects_failed_no_op(self):
+        args = self.import_fixture()
+        dry = json.loads(self.cli('plan-import', *args, *self.simulated_route(evidence_class='simulated'), ok=False))
+        self.assertIn('Route receipt does not match', ' '.join(dry['blockers']))
+        other = self.repo / 'other.xlsx'
+        save_fixture(other, '2+2', data=9, simple=True)
+        route = self.simulated_route(no_op=other.read_bytes())
+        dry = json.loads(self.cli('plan-import', *args, *route, ok=False))
+        self.assertIn('Qualified no-op save does not preserve workbook contents.', dry['blockers'])
+        save_fixture(self.book, '2+4', simple=True)
+        dry = json.loads(self.cli('plan-import', *args, ok=False))
+        self.assertEqual(dry['gitDiff'], [{'sheet': 'Model', 'cell': 'A1', 'before': '=2+2', 'after': '=2+3'}])
+        self.assertEqual(dry['workbookDiff'], [{'sheet': 'Model', 'cell': 'A1', 'before': '=2+2', 'after': '=2+4'}])
+        self.assertIn('Two-sided managed drift; no merge.', dry['blockers'])
+
+    def test_verified_import_recovers_from_partial_save_and_needs_acceptance(self):
+        args = self.import_fixture()
+        # Numeric input changes on existing cells are allowed, not replayed from Git.
+        save_fixture(self.book, '2+2', data=9, simple=True)
+        original = self.book.read_bytes()
+        sync_path = self.store / 'sync.json'
+        sync = sync_path.read_bytes()
+        args += self.simulated_route()
+        dry = json.loads(self.cli('plan-import', *args))
+        args += ['--approved-plan', dry['planSha256']]
+        self.assertFalse((self.repo / 'result.xlsx').exists())
+        lock = self.repo / '~$model.xlsx'
+        lock.touch()
+        self.assertIn('Workbook lock file', self.cli('prepare-import', *args, ok=False))
+        lock.unlink()
+        self.cli('prepare-import', *args)
+        result = self.repo / 'result.xlsx'
+        self.assertEqual(result.read_bytes(), original)
+
+        def reopen_arg(result_value='5'):
+            digest = hashlib.sha256(result.read_bytes()).hexdigest()
+            return ['--saved', digest, '--reopened', digest, '--result', result_value]
+
+        save_fixture(result, '2+3', data=1, simple=True)
+        error = self.cli('verify-import', *args, *reopen_arg(), ok=False)
+        self.assertIn('Desktop save attested', error)
+        self.assertIn('preservation requirements', error)
+        self.assertEqual(self.book.read_bytes(), original)
+        self.assertEqual(sync_path.read_bytes(), sync)
+        self.assertIn('Expected a new copy', self.cli('prepare-import', *args, ok=False))
+        result.unlink()
+        self.cli('prepare-import', *args)
+        save_fixture(result, '2+3', data=9, simple=True)
+        error = self.cli('verify-import', *args, *reopen_arg('6'), ok=False)
+        self.assertIn('does not match the independent desktop readback', error)
+        reopened = reopen_arg()
+        evidence = self.cli('verify-import', *args, *reopened)
+        manifest = evidence.split('Manifest SHA-256: ')[1].splitlines()[0]
+        self.assertEqual(sync_path.read_bytes(), sync)
+        self.cli('accept-import', *args, *reopened, '--reviewed', '0' * 64, ok=False)
+        self.assertEqual(sync_path.read_bytes(), sync)
+        self.cli('accept-import', *args, *reopened, '--reviewed', manifest)
+        self.assertEqual(self.book.read_bytes(), original)
+        self.assertEqual(json.loads(sync_path.read_bytes()), {'schema': 1, 'workbook': result.name,
+                         'versionSha256': reopened[1], 'manifestSha256': manifest})
 
     def cli(self, *args, ok=True, watch_neighbor=False):
         entry = [__file__, '--watch-neighbor'] if watch_neighbor else [str(SCRIPT)]
