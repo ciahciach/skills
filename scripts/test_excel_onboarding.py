@@ -1,4 +1,5 @@
 import base64
+import csv
 import hashlib
 from io import BytesIO, TextIOWrapper
 import json
@@ -71,8 +72,18 @@ class OnboardingTest(unittest.TestCase):
         self.repo.mkdir()
         subprocess.run(['git', 'init', '-q'], cwd=self.repo, check=True)
         self.store = fixture / 'private-store'
-        # Python 3.13+ applies mode 0700 as a private directory ACL on Windows.
-        self.store.mkdir(mode=0o700)
+        if sys.platform == 'win32':
+            self.store.mkdir()
+            identity = subprocess.check_output(['whoami.exe', '/user', '/fo', 'csv', '/nh'],
+                                               text=True, errors='replace', timeout=30)
+            _, sid = next(csv.reader(identity.splitlines()))
+            # Grant the operator access before removing the temp directory's inherited ACEs.
+            subprocess.run(['icacls.exe', str(self.store), '/grant:r', f'*{sid}:(OI)(CI)F'],
+                           check=True, timeout=30, stdout=subprocess.PIPE)
+            subprocess.run(['icacls.exe', str(self.store), '/inheritance:r'],
+                           check=True, timeout=30, stdout=subprocess.PIPE)
+        else:
+            self.store.mkdir(mode=0o700)
         self.book = self.repo / 'model.xlsx'
         (self.repo / 'AGENTS.md').write_text('Prepared fixture. See docs/agents/excel.md.\n', encoding='utf-8')
         (self.repo / 'docs/agents').mkdir(parents=True)
@@ -83,7 +94,7 @@ class OnboardingTest(unittest.TestCase):
         result = subprocess.run([sys.executable, '-X', 'utf8', *entry, *args, '--store', str(self.store)],
                                 cwd=self.repo, capture_output=True, encoding='utf-8')
         if ok:
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.returncode, 0, f'{args!r}: {result.stderr}')
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
         return result.stdout + result.stderr
