@@ -1,0 +1,35 @@
+{
+  "skill_name": "setup-excel-repo",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Invoke /setup-excel-repo on a Git repo without a workbook, remote or tracker. Review the proposed diff, approve it, and then invoke the command again unchanged. Start a separate agent without setup and ask it where to review formulas and record the first ADR.",
+      "expected_output": "AGENTS.md links docs/agents/{excel,domain,issue-tracker,triage-labels}.md. Local Markdown and single-context are discoverable. No workbook or stub directories. Rerun preserves file hashes; fresh agent follows the links without setup.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Invoke /setup-excel-repo on a repo without a workbook but with a custom Excel runbook, tracker and triage roles, domain map, wiki and ADR index. Approve only missing rules and links.",
+      "expected_output": "Existing scaffold is adopted with a narrow diff. Tracker, triage roles, domain map, wiki, ADRs and existing Excel paths are preserved. No second runbook or docs/adr directory is created.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Invoke Matt's setup on a repo with no workbooks, but with Excel versioning planned. Finish engineering setup and explicitly accept its optional Excel offer.",
+      "expected_output": "The user receives /setup-excel-repo as the sole next step. The beta is not invoked or installed, no Excel scaffold is written, and no workbook is onboarded.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Invoke Matt's setup on a repo with an Excel scaffold but no workbook. Finish engineering setup and decline the optional Excel offer.",
+      "expected_output": "The existing Excel scaffold remains byte-for-byte intact and the beta is not invoked, installed or recommended as the next step.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Review the current formula export, change one explicitly targeted ordinary formula, and prepare to reapply it to a separate copy. The shared router has no qualified save path for this workbook profile.",
+      "expected_output": "Agent uses current text, produces a targeted diff and no-write plan with the missing qualification as a blocker, then stops before runtime or save. Reopen/readback remains not run and no COM fallback is attempted.",
+      "files": []
+    }
+  ]
+}

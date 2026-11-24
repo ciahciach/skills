@@ -15,10 +15,11 @@ You invoke this by typing `/ask-matt`; the agent won't reach for it on its own.
 | Two skills that look interchangeable | The line between them, and it is usually one concrete test rather than a matter of taste. [grill-me](https://aihero.dev/skills-grill-me) or [grill-with-docs](https://aihero.dev/skills-grill-with-docs) turns on whether you are in a working directory; [grill-with-docs](https://aihero.dev/skills-grill-with-docs) or [wayfinder](https://aihero.dev/skills-wayfinder) turns on whether the effort fits one session |
 | A long session and a decision about the [context](https://www.aihero.dev/ai-coding-dictionary/context) | The ordered tree over the five options at a phase boundary |
 | A skill you have already picked | Nothing useful. Invoke that skill directly. |
+| A repo that needs Excel workbook versioning | The optional `/setup-excel-repo` beta, run by the user even if there is no workbook yet |
 
 ## Prerequisites
 
-The router names skills; it does not install them. Everything it points at has to be installed for the recommendation to be actionable, and it only knows the promoted skills in this repo.
+The router names skills; it does not install them. Everything it points at has to be available in your [harness](https://www.aihero.dev/ai-coding-dictionary/harness) for the recommendation to be actionable.
 
 The tracker-dependent routes (triage, `to-spec`, `to-tickets`, `implement`) assume [setup-matt-pocock-skills](https://aihero.dev/skills-setup-matt-pocock-skills) has already configured an issue tracker in the repo. The router recommends them even before that has happened.
 
@@ -40,7 +41,7 @@ The skill's other key idea is the **phase boundary**. A phase is a chunk of work
 | --- | --- |
 | **Continue** | The next phase wants this one verbatim, or you have [smart zone](https://www.aihero.dev/ai-coding-dictionary/smart-zone) left. It is the only move that keeps the session as a [primary source](https://www.aihero.dev/ai-coding-dictionary/primary-source), so rule it out first |
 | **`/clear`** | Everything behind you is disposable. The cheapest option, and you cannot undo it if you were wrong |
-| **[handoff](https://aihero.dev/skills-handoff)** | Something has to travel: a new [harness](https://www.aihero.dev/ai-coding-dictionary/harness), a new directory, a colleague, a side task forked mid-phase |
+| **[handoff](https://aihero.dev/skills-handoff)** | Something has to travel: a new harness, a new directory, a colleague, a side task forked mid-phase |
 | **Subagent** | The task is scoped tightly enough to run with you [away from the keyboard](https://www.aihero.dev/ai-coding-dictionary/afk) |
 | **`/compact`** | None of the above. It is the default, and the tree often ends here |
 
@@ -54,7 +55,7 @@ People keep asking for one in the README. This skill is that list. A static tabl
 
 **It told me half the skills aren't installed.**
 
-This is a known bug, and it is not fixed. Most of the skills the router routes you through set `disable-model-invocation: true`, which means the harness leaves them out of the skill list it injects into the agent's context. The agent reads that list as exhaustive and reports them missing. In one reported session, it declared the whole spec-and-tickets flow absent and rerouted to bare `/grilling` and `/tdd`. Sixteen of the plugin's twenty-seven skills carry the flag, so this is the common case rather than an edge. They are installed. Type the slash command anyway, or check `.claude-plugin/plugin.json`, which is the authority on what is present.
+This is a known bug, and it is not fixed. Most of the skills the router routes you through set `disable-model-invocation: true`, which means the harness leaves them out of the skill list it injects into the agent's context. The agent reads that list as exhaustive and reports them missing. In one reported session, it declared the whole spec-and-tickets flow absent and rerouted to bare `/grilling` and `/tdd`. For a skill you installed, type the slash command directly. If you use the plugin, check `.claude-plugin/plugin.json` for what it ships. The optional `/setup-excel-repo` beta is listed in the fork's [in-progress bucket](https://github.com/ciahciach/skills/tree/main/skills/in-progress), not shipped in the plugin.
 
 **It described a skill's behaviour, and the skill doesn't do that.**
 

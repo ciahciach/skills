@@ -105,6 +105,8 @@ Off the main flow entirely.
 
 **`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels, and doc layout the other skills assume. Custom issue trackers also work.
 
+**`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
+
 <!-- next-step-pointer -->
 > **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
 > and picks one), or state it yourself in one line with the exact command.
