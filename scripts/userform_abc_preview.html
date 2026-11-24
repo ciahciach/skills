@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synthetic UserForm A/B/C</title>
+<style>
+  body { margin: 4px; background: #ddd; font: 9pt Tahoma, sans-serif; }
+  main { width: max-content; max-width: 100%; margin: 24px auto; }
+  form { position: relative; box-sizing: border-box; border: 1px solid #777; }
+  header { padding: 3pt 5pt; background: #fff; border-bottom: 1px solid #aaa; }
+  .client { position: relative; }
+  .control { position: absolute; box-sizing: border-box; margin: 0; font: inherit; color: inherit; }
+  .frame { border: 1px solid #aaa; padding: 0; min-width: 0; }
+  .frame legend { margin-left: 5pt; }
+  .frame div { position: absolute; inset: 0; }
+  input, select, button { border-radius: 0; }
+  nav { display: flex; gap: 8px; margin: 12px 0; }
+  nav [aria-current] { font-weight: bold; }
+  aside { max-width: 276pt; }
+</style>
+<main>
+  <h1>Synthetic UserForm comparison</h1>
+  <div id="preview"></div>
+  <nav aria-label="Layout"></nav>
+  <aside>Browser approximation: title bar, borders, dropdown, focus cues, DPI and system rendering may differ in Excel.</aside>
+</main>
+<script>
+const model = /* SHARED_MODEL */;
+const values = {};
+const preview = document.querySelector('#preview');
+const nav = document.querySelector('nav');
+const pt = n => `${n}pt`;
+for (const layout of model.layouts) {
+  const link = document.createElement('a');
+  link.href = `#${layout.key}`;
+  link.dataset.layout = layout.key;
+  link.textContent = layout.caption;
+  nav.append(link);
+}
+
+function render() {
+  const layout = model.layouts.find(l => `#${l.key}` === location.hash) ?? model.layouts[0];
+  for (const link of nav.children) {
+    if (link.dataset.layout === layout.key) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+  const form = document.createElement('form');
+  form.style.width = pt(layout.width);
+  form.style.background = model.background;
+  form.style.color = model.foreground;
+  form.style.font = `${pt(model.fontSize)} ${model.font}, sans-serif`;
+  const header = document.createElement('header');
+  header.textContent = layout.caption;
+  const client = document.createElement('div');
+  client.className = 'client';
+  client.style.height = pt(layout.height - 18);
+  form.append(header, client);
+  const containers = {'': client};
+  const inputs = {};
+  for (const control of layout.controls) {
+    const {name, kind, rect, caption, parent} = control;
+    const tag = {Label: 'label', TextBox: 'input', ComboBox: 'select',
+      CommandButton: 'button', Frame: 'fieldset'}[kind];
+    const el = document.createElement(name === 'ResultText' ? 'output' : tag);
+    el.id = name;
+    el.className = 'control';
+    [el.style.left, el.style.top, el.style.width, el.style.height] = rect.map(pt);
+    el.textContent = caption;
+    if (name === 'ResultText') el.setAttribute('aria-live', 'polite');
+    else if (kind === 'Label') el.htmlFor = name.slice(5);
+    if (kind === 'Frame') {
+      el.classList.add('frame');
+      const legend = document.createElement('legend');
+      legend.textContent = caption;
+      const inner = document.createElement('div');
+      el.replaceChildren(legend, inner);
+      containers[name] = inner;
+    }
+    if (kind === 'ComboBox') {
+      const blank = new Option('', '');
+      blank.disabled = true;
+      blank.hidden = true;
+      el.add(blank);
+      for (const status of model.statuses) el.add(new Option(status, status));
+    }
+    if (kind === 'TextBox' || kind === 'ComboBox') {
+      el.style.background = model.inputBackground;
+      el.value = values[name] ?? '';
+      el.addEventListener('input', () => { values[name] = el.value; });
+      el.addEventListener('change', () => { values[name] = el.value; });
+      inputs[name] = el;
+    }
+    if (kind === 'CommandButton') el.type = name === 'CheckSample' ? 'submit' : 'reset';
+    containers[parent].append(el);
+  }
+  const result = form.querySelector('output');
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const trim = value => value.replace(/^ +| +$/g, '');
+    const quantity = trim(inputs.Quantity.value);
+    const error = !trim(inputs.SampleCode.value) ? ['SampleCode', model.missingCode]
+      : !inputs.SampleStatus.value ? ['SampleStatus', model.missingStatus]
+      : !/^[0-9]+$/.test(quantity) || !/[1-9]/.test(quantity) ? ['Quantity', model.invalidQuantity]
+      : null;
+    result.value = error ? error[1] : model.success;
+    if (error) inputs[error[0]].focus();
+  });
+  form.addEventListener('reset', event => {
+    event.preventDefault();
+    for (const [name, input] of Object.entries(inputs)) input.value = values[name] = '';
+    result.value = '';
+    inputs.SampleCode.focus();
+  });
+  preview.replaceChildren(form);
+}
+window.addEventListener('hashchange', render);
+nav.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  const links = [...nav.children];
+  const step = event.key === 'ArrowRight' ? 1 : -1;
+  const next = links[(links.indexOf(event.target) + step + links.length) % links.length];
+  next.focus();
+  next.click();
+});
+render();
+</script>
+</html>
