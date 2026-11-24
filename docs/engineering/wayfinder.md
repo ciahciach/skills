@@ -74,6 +74,14 @@ This question is verbatim from a user report, and others report the same outcome
 **Can I work several tickets in parallel?**
 The frontier shows you which tickets you can take, and blocking edges make parallel work safe on paper. In practice, one ticket at a time is the safer default. If you work two grilling tickets at once, one session can ask you a question you just answered in the other, because the sessions share no [context](https://www.aihero.dev/ai-coding-dictionary/context). Prototype tickets have a known gap too. One user reported an agent that built three UI variations, chose one itself, and closed the ticket. That choice is yours, and the skill does not yet say so clearly enough. If you do run tickets in parallel, review the dependency graph yourself first.
 
+**What if I accept only part of a ticket?**
+The original ticket records exactly what you accepted and which ticket owns each part still open.
+
+- **Any remaining scope stays on the original:** it stays open and out of **Decisions so far**.
+- **All remaining scope moves to verified direct children of the same map:** the original can close with an index entry limited to what you accepted.
+
+In [Does the Proposed Setup and Daily Workflow Fit Real Agent Work?](https://github.com/ciahciach/skills/issues/8#issuecomment-7110803534), the clickable HTML form and A/B/C switcher were accepted, but no base layout was selected. That acceptance covered neither [How Should the Chosen HTML Layout Be Adapted to a Native Excel UserForm?](https://github.com/ciahciach/skills/issues/14) nor [Create or Adopt an Excel Repository Scaffold with the Setup Skill](https://github.com/ciahciach/skills/issues/15). Both were verified as direct children of [Excel Repo Setup: Agent-Native Workbook Versioning](https://github.com/ciahciach/skills/issues/3), not children of the HTML ticket. The original could therefore close with an HTML-only decision while each follow-up kept its own acceptance.
+
 **Do I have to use GitHub Issues?**
 No. Any issue tracker works. GitHub has the best support, because its native sub-issues and blocking relationships make the frontier visible without opening the map. People also use GitLab, Linear, Jira and local markdown. There are two caveats. On a tracker with no native blocking, wayfinder infers the dependency graph from text, and you must correct it by hand. Local markdown puts the artifacts in your repo, which is not recommended, because material stored in the repo tends to persist by accident. Open-source maintainers hit the opposite problem (public trackers fill up with agent-generated planning tickets) and often choose local markdown anyway.
 
@@ -91,7 +99,7 @@ It is this skill. v1.1 renamed it to `wayfinder`, and you invoke it as `/wayfind
 - The destination is written down and agreed before a single ticket exists.
 - Every open ticket reads as a question. Any ticket that reads "build the X" is either mis-typed or belongs downstream of the map.
 - You can look at your tracker and see which tickets are takeable without opening the map, because native blocking shows the frontier.
-- A session resolves one ticket, posts the answer as a resolution comment, closes it, and adds one line to the map's *Decisions so far*. Then it stops.
+- A closed decision ticket has a resolution comment and one line in the map's *Decisions so far*. If part of the scope is still open, you can see which ticket owns it without guessing from the acceptance comment.
 - **Not yet specified** shrinks over time. When fog graduates into a ticket, it leaves that section and does not appear in both places.
 - When the opening breadth-first grill finds no fog at all, the skill stops and tells you the effort is small enough to skip the map.
 - The session that finishes the map points you toward a spec, not a pull request.
