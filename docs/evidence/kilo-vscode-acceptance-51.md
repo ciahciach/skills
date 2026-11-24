@@ -1,0 +1,26 @@
+# Odbiór wydania Kilo VS Code (#51)
+
+**2026-11-24: `BLOCKED` na wejściu.** [#51](https://github.com/ciahciach/skills/issues/51) pozostaje otwarte. Sprawdzono metadane źródła i lokalnej instalacji, nie zachowanie wydanych skilli. Nie uruchomiono prób ani nie tworzono repozytorium fixture, sesji lub worktree. Instalacja i konfiguracja nie zostały zmienione.
+
+## Warunki wejścia
+
+| Warunek | Dowód i wynik |
+| --- | --- |
+| Opublikowane zintegrowane wydanie, znana rewizja | Scalone PR-y: [`spawn` #54](https://github.com/ciahciach/skills/pull/54), [`kilo-handoff` #57](https://github.com/ciahciach/skills/pull/57), [`implement-spec` #55](https://github.com/ciahciach/skills/pull/55). [Manifest dystrybucji na `main` (`16f632c`)](https://github.com/ciahciach/skills/blob/16f632c45c297cca28d3e47d344308ceeec8f438/.claude-plugin/plugin.json) ma nadal wersję `1.3.2`, bez podbicia od czasu integracji. [Workflow `Release`](https://github.com/ciahciach/skills/actions/runs/45469532133/job/138713395549) przygotował gałąź wersjonującą, ale GitHub odmówił utworzenia PR-a: `GitHub Actions is not permitted to create or approve pull requests`. GitHub Releases i zdalne tagi były puste. Nie potwierdzono wydania w [uzgodnionym kanale dystrybucji](https://github.com/ciahciach/skills/issues/41#issuecomment-7133265873); ani `main`, ani gałąź wersjonująca nie są dowodem wydania. |
+| Wersja hosta i sesja odbioru | `code --list-extensions --show-versions` wykazało `kilocode.kilo-code@7.8.32` w lokalnym CLI. Wersji aktywnego hosta w świeżej sesji odbioru nie zweryfikowano. ID sesji i worktree próby: brak, nie uruchomiono. Wersje faktycznie załadowanych `kilo-handoff`, `spawn` i `implement-spec`: niezweryfikowane. |
+| Syntetyczne repo i niezależny odbierający | Brak checkoutu próbnego w tym przebiegu. W następnej próbie osobny odbierający, niebędący autorem implementacji, przygotowuje izolowany fixture zgodnie z [decyzją #42](https://github.com/ciahciach/skills/issues/42#issuecomment-7133571345). |
+| Osobne jawne zlecenie prób | Nie otrzymano osobnego zlecenia startu sesji i wykonania prób na określonym wydaniu. Samo zlecenie pracy nad #51 nie zastępuje tej zgody ani natywnych bramek. |
+
+## Scenariusze
+
+Wszystkie poniższe scenariusze są wymagane i zablokowane przez warunki wejścia. Nie ma śladów runtime, Git ani GitHuba z fixture; linki powyżej dotyczą wyłącznie implementacji i metadanych źródła. Ostatnia kolumna określa, jaki dowód zebrać po odblokowaniu, a nie jakie dowody już istnieją.
+
+| Scenariusz | Oczekiwane zachowanie | Zaobserwowane / status | Dowód po wznowieniu |
+| --- | --- | --- | --- |
+| Pochodzenie wydania | Kanoniczne wywołanie `skill` dla `kilo-handoff` zwraca katalog załadowanej kopii i unikalny znacznik wydania niepodany w prompcie. | Nie wywołano w hoście odbiorowym. `BLOCKED`. | Wynik narzędzia ze śladu hosta, rewizja wydania, wersja rozszerzenia i ID sesji. Lokalna zamiast wydanej kopia lub brak weryfikowalnego pochodzenia zatrzymuje próby bez zmian instalacji. |
+| Równoległość i frontier A/B/C | A i B faktycznie pracują równolegle na rozłącznych plikach. C zależy wyłącznie od A i czeka mimo gotowego PR-a i zielonego CI A. Po potwierdzonym merge A przez człowieka C startuje samoczynnie, gdy B nadal trwa. | Nie uruchomiono grafu. `BLOCKED`. | Zapis grafu fixture i oś czasu odróżniająca przyjęcie lub kolejkę promptu, start i zakończenie, wraz z ID sesji/worktree, śladem automatycznego wznowienia oraz linkami PR, CI i merge. |
+| Handoff i review A | Poprzednik jawnie zwalnia zakres zapisu. Następca w świeżej sesji sprawdza ten sam checkout po zwolnieniu i jawnie przejmuje ten sam zakres przed pierwszym zapisem. Dwa różne diffy tego samego pliku (staged i unstaged) oraz treść osobnego untracked są zachowane. Przed commitem odbywa się niezależne review aktualnego diffu, ponawiane po zmianie ocenianego diffu. | Nie wykonano handoffu ani review w fixture. `BLOCKED`. | Oba diffy i treść untracked przed zwolnieniem oraz po nim, przed pierwszym zapisem następcy. Checkout, branch, ID obu sesji i wspólne ID zwolnienia, sprawdzenia i przejęcia; ślad review i jego ponowienia z identyfikacją ocenianych diffów. |
+| Bramki B | Natywne pytanie i permission są osobnymi zdarzeniami. Zależna czynność nie rusza przed działaniem człowieka. | Nie wywołano żadnej bramki. `BLOCKED`. | Dwa osobne zdarzenia w hoście oraz kolejność: blokada, działanie człowieka, wznowienie zależnej czynności. |
+| Niepewny start A, B lub C | Po kontrolowanej niepewności koordynator uzgadnia faktyczny stan przed ewentualnym ponowieniem; nie powstaje duplikat w Agent Managerze ani na GitHubie. | Nie wywołano niepewnego startu. `BLOCKED`. | Ślad niepewnego wyniku, stan Agent Managera i worktree w Git, powiązane wpisy GitHuba i decyzja o ponowieniu lub jego zaniechaniu. Bez czwartego zgłoszenia i danych produkcyjnych. |
+
+Wznowienie: niezależny odbierający otrzymuje potwierdzoną rewizję opublikowanego wydania i osobne jawne zlecenie prób, przygotowuje syntetyczny checkout i sprawdza pochodzenie załadowanych skilli w świeżej sesji normalnego Kilo VS Code. Zbiorczy `PASS` wymaga obserwacji runtime dla każdego wymaganego scenariusza, zgodnie z [kryteriami odbioru](https://github.com/ciahciach/skills/issues/11#issuecomment-7132602930). Sesje, worktree i branche powstałe podczas prób pozostają do osobno zleconego sprzątania.
