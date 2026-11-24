@@ -20,6 +20,15 @@ OFFICE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 
+class NativePilotTest(unittest.TestCase):
+    def test_requires_an_explicit_desktop_request(self):
+        result = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(SCRIPT), 'pq-pilot'],
+                                stdin=subprocess.DEVNULL, capture_output=True, encoding='utf-8', timeout=90)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires explicit --desktop', result.stderr)
+        self.assertEqual(result.stdout, '')
+
+
 def make_writable(path: Path):
     if path.exists():
         path.chmod(stat.S_IWRITE | stat.S_IRUSR)

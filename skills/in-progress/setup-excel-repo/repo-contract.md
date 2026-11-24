@@ -25,7 +25,17 @@ Use this checklist to fill gaps in existing rules or seed a new local contract. 
 
 ## Power Query XLSX Pilot
 
-Use `scripts/excel-onboarding.py` and its sibling `excel_power_query.py` from the skills repository, with the target Git worktree as the current directory. This pilot prepares and verifies a copy; the operator runs the separately qualified desktop step. It does not qualify an Excel build or launch Excel. See the [desktop pilot decision](https://github.com/ciahciach/skills/issues/39) and [runtime research](https://github.com/ciahciach/skills/issues/37).
+To reproduce the [native acceptance run](https://github.com/ciahciach/skills/pull/46), run this from the skills repository on a logged-in Windows desktop with Excel, Python 3.14, pywin32 and Git available:
+
+```powershell
+py -3.14 -B -X utf8 scripts/excel-onboarding.py pq-pilot --desktop
+```
+
+`--desktop` authorizes Excel to create a new synthetic fixture and populate `Odbior!B6` with `1` once from a literal-only query. Review the printed M change and plan, then enter its `planSha256` to authorize the no-op and Formula-only saves. Declining or closing input stops before either copy is saved. Only fixture creation refreshes anything; the copy saves and the independent read-only reopens never run macros, update links or refresh. Each native phase has a three-minute timeout.
+
+The command prints the private attempt path under `%TEMP%\kilo`, and on success the disposable candidate path. `report.json` records the runtime, the phase results and hashes, and whether the fixture base and private sync stayed unchanged. A blocked attempt is not an accepted result; do not use any copy from it. No attempt publishes a workbook or advances sync, and no workbook or report belongs in Git. For manual acceptance, open the verified copy read-only: **`Odbior!B6` must still show `1`**. Close without saving or refreshing. The saved M contains `2`; the check does not test its execution.
+
+The standalone `pq-plan`, `pq-prepare` and `pq-verify` commands below remain passive; the operator selects and qualifies the desktop step separately when using them. Run those commands with the target Git worktree as the current directory. See the [desktop pilot decision](https://github.com/ciahciach/skills/issues/39) and [runtime research](https://github.com/ciahciach/skills/issues/37).
 
 1. Use a synthetic `.xlsx` with an existing worksheet-loaded query and a neighboring query, no Data Model, macros, external connections or refresh-on-open. Use numeric synthetic data and keep the result schema unchanged. `export --power-query` reads saved M into `power-query.json` and writes `power-query-inventory.json` separately. The inventory maps connection IDs to recognized queries, lists worksheet table/range destinations and reports Data Model presence. Unknown mappings block import. Review names, identifiers and constants before publication; nonempty inline M strings and comments block M export rather than producing redacted, non-importable M. Formula-only export does not parse M. Publish and accept a fresh initial sync for this fixture using the onboarding commands.
 2. Make a proposed `power-query.json` at a separate worktree path. Review `git diff --no-index -- baseline/power-query.json proposed.json`. Keep the approved export immutable. Change exactly one existing expression, using one M expression rather than a section document. Inventory is never input. The preflight admits data-only differences it can prove (changed values in existing numeric or Boolean constant cells without a structural change); other differences block.

@@ -68,28 +68,33 @@ and formulas for sensitive information. No redacted export or import is provided
 
 Versions are named by SHA-256 and never replaced by this tool. Local read-only
 files do not protect against storage administrators; use appropriate retention
-and backups. This command does not qualify an Excel runtime or edit workbook internals.
+and backups. Only the explicit pq-pilot command launches Excel, and only for
+fresh synthetic workbooks in a private attempt directory.
 """
 
 import argparse
 from collections import Counter
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 import hashlib
-from io import BytesIO, TextIOWrapper
+from io import BytesIO, StringIO, TextIOWrapper
 import json
 import os
 from pathlib import Path, PureWindowsPath
 import posixpath
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+from typing import Any
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 from zipfile import BadZipFile, ZipFile
 
 from excel_power_query import MODEL, M_SOURCE, QueryBlocked, check_expression, connection_query, read_mashup
+from excel_pq_desktop import BASE_M, EDITED_M, LABEL, LOADED, NEIGHBOR, NEIGHBOR_M
 
 
 S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
@@ -773,6 +778,25 @@ def unique_json_object(pairs):
     return result
 
 
+def verify_query_copy(data, snapshot, result, expected, folder):
+    observed = checked_query_snapshot(result)
+    if observed.queries != expected:
+        raise Blocked('Saved M differs from the approved edit or an adjacent query changed.')
+    if observed.wiring != snapshot.wiring:
+        raise Blocked('Power Query load wiring changed.')
+    before = preserved_parts(data, snapshot.part)
+    after = preserved_parts(result, observed.part)
+    workbook_changed = False
+    if snapshot.workbook_part == observed.workbook_part == 'xl/workbook.xml':
+        workbook_changed = before.pop('xl/workbook.xml') != after.pop('xl/workbook.xml')
+    if observed.part != snapshot.part or observed.metadata != snapshot.metadata or before != after:
+        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+    save_metadata = excel_copy_metadata_changes(data, result, folder) if workbook_changed else []
+    if save_metadata is None:
+        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+    return save_metadata
+
+
 def power_query_import(root, store, args):
     # Every phase recomputes the plan against the original and the approved sync.
     sync_file = store / 'sync.json'
@@ -860,21 +884,7 @@ def power_query_import(root, store, args):
     digest = sha(result)
     if args.reopened_sha256 != digest or digest == base_digest:
         raise Blocked('Independent desktop reopen must attest the exact changed candidate checksum.')
-    observed = checked_query_snapshot(result)
-    if observed.queries != expected:
-        raise Blocked('Saved M differs from the approved edit or an adjacent query changed.')
-    if observed.wiring != snapshot.wiring:
-        raise Blocked('Power Query load wiring changed.')
-    before = preserved_parts(data, snapshot.part)
-    after = preserved_parts(result, observed.part)
-    workbook_changed = False
-    if snapshot.workbook_part == observed.workbook_part == 'xl/workbook.xml':
-        workbook_changed = before.pop('xl/workbook.xml') != after.pop('xl/workbook.xml')
-    if observed.part != snapshot.part or observed.metadata != snapshot.metadata or before != after:
-        raise Blocked('Could not verify preservation of adjacent workbook parts.')
-    save_metadata = excel_copy_metadata_changes(data, result, candidate.parent) if workbook_changed else []
-    if save_metadata is None:
-        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+    save_metadata = verify_query_copy(data, snapshot, result, expected, candidate.parent)
     artifacts = build_export(result, metadata['workbook'], power_query=True)
     # This evidence is intentionally not a publishable onboarding export or a sync update.
     artifacts['manifest.json'] = json_bytes({'kind': 'power-query-saved-package-verification', 'planSha256': plan_digest,
@@ -888,6 +898,168 @@ def power_query_import(root, store, args):
     preview.parent.mkdir(mode=0o700, exist_ok=True)
     write_export(preview, artifacts)
     print('Verified saved M, load wiring and adjacent parts. Desktop save and reopen were operator-attested.')
+
+
+def native_pq_pilot(desktop: bool) -> None:
+    if not desktop:
+        raise Blocked('The native pilot requires explicit --desktop.')
+    if os.name != 'nt':
+        raise Blocked('The native pilot requires a logged-in Windows desktop with Excel and pywin32.')
+
+    parent = Path(tempfile.gettempdir()).resolve() / 'kilo'
+    parent.mkdir(exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix='pq-pilot-', dir=parent))
+    root = work / 'fixture'
+    store = work / 'private'
+    root.mkdir()
+    store.mkdir()
+    store = storage_path(root, store)
+    require_private(work, root, store)
+    print(f'Private pilot directory: {work}', flush=True)
+
+    base, sync = root / 'base.xlsx', store / 'sync.json'
+    report = work / 'report.json'
+    phases: dict[str, Any] = {}
+    evidence: dict[str, Any] = {'kind': 'native-power-query-pilot', 'status': 'blocked', 'phases': phases,
+                                'promoted': False}
+    runtime = None
+    stage = 'fixture'
+    worker = Path(__file__).resolve().with_name('excel_pq_desktop.py')
+
+    def digest_of(path: Path) -> str:
+        return sha(read_bounded(path, MAX_PACKAGE))
+
+    def native(action: str, path: Path, digest: str = '') -> dict:
+        try:
+            result = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(worker), action, str(path), digest],
+                                    stdin=subprocess.DEVNULL, capture_output=True, encoding='utf-8', timeout=180)
+        except subprocess.TimeoutExpired as error:
+            steps = (error.stderr or b'').decode('utf-8', errors='replace').splitlines()
+            last = steps[-1] if steps else 'not started'
+            cleanup = ('Dedicated Excel was assigned to the timeout job.' if 'Excel attached to timeout job' in steps
+                       else 'Excel startup/cleanup was not confirmed.')
+            raise Blocked(f'Native {action} timed out after 180 seconds (last step: {last}). '
+                          f'{cleanup} Do not use this copy.') from error
+        if result.returncode:
+            raise Blocked(f'Native {action}: {result.stderr.strip()}')
+        observed = json.loads(result.stdout)
+        if runtime is not None and observed['runtime'] != runtime:
+            raise Blocked('Excel or backend version changed between native phases.')
+        return observed
+
+    def checkpoint() -> None:
+        pending = report.with_suffix('.tmp')
+        pending.write_bytes(json_bytes(evidence))
+        pending.replace(report)
+
+    try:
+        evidence['desktopWorkerSha256'] = digest_of(worker)
+        checkpoint()
+        phases['fixture'] = native('create', base)
+        runtime = phases['fixture']['runtime']
+        data = read_bounded(base, MAX_PACKAGE)
+        snapshot = checked_query_snapshot(data)
+        evidence['baseSha256'] = sha(data)
+        if snapshot.queries != {LOADED: BASE_M, NEIGHBOR: NEIGHBOR_M}:
+            raise Blocked('The fixture did not save the expected synthetic queries.')
+
+        stage = 'plan'
+        baseline = root / 'baseline'
+        with redirect_stdout(StringIO()):
+            export(root, store, base.name, 'baseline', power_query=True)
+            preview = preview_path(store, 'baseline')
+            reviewed = digest_of(preview / 'manifest.json')
+            _, artifacts = verified_export(root, store, preview, reviewed)
+            write_export(baseline, artifacts)
+            accept_initial(root, store, baseline.name, reviewed)
+        evidence['syncSha256'] = digest_of(sync)
+        expected = {**snapshot.queries, LOADED: EDITED_M}
+        edit = root / 'proposed.json'
+        write_once(edit, json_bytes({'kind': M_SOURCE, 'queries': expected}))
+        args = argparse.Namespace(command='pq-plan', baseline=baseline.name, edit=edit.name, label=LABEL,
+                                  qualified_route=f"synthetic qualification trial #52 pywin32 {runtime['pywin32']} "
+                                                  f"Excel {runtime['excel']}")
+        with redirect_stdout(StringIO()) as output:
+            power_query_import(root, store, args)
+        plan = json.loads(output.getvalue())
+        phases['plan'] = {'plan': plan, 'approved': False, 'beforeM': snapshot.queries[LOADED], 'afterM': EDITED_M,
+                          'wiring': snapshot.wiring}
+        checkpoint()
+        print(json_bytes(phases['plan']).decode('utf-8'), end='', flush=True)
+        try:
+            approved = input('Approve this plan and both copy saves by entering planSha256: ').strip()
+        except EOFError:
+            approved = ''
+        if approved != plan['planSha256']:
+            raise Blocked('Plan was not approved; no copies were saved.')
+        phases['plan']['approved'] = True
+        args.approved_plan = approved
+        checkpoint()
+
+        stage = 'noop'
+        noop = work / 'noop' / 'workbook.xlsx'
+        noop.parent.mkdir()
+        shutil.copyfile(base, noop)
+        phases['noop'] = {'save': native('noop', noop, evidence['baseSha256'])}
+        checkpoint()
+        noop_data = read_bounded(noop, MAX_PACKAGE)
+        if sha(noop_data) != phases['noop']['save']['sha256']:
+            raise Blocked('No-op copy changed after native save.')
+        changes = verify_query_copy(data, snapshot, noop_data, snapshot.queries, noop.parent)
+        phases['noop']['excelSaveMetadataChanges'] = changes
+        noop_read = native('reopen', noop, phases['noop']['save']['sha256'])
+        phases['noop']['reopen'] = noop_read
+        if noop_read['queries'] != snapshot.queries:
+            raise Blocked('No-op native reopen did not preserve both formulas.')
+        checkpoint()
+
+        stage = 'prepare'
+        args.command = 'pq-prepare'
+        power_query_import(root, store, args)
+        candidate = store / 'candidates' / args.label / 'workbook.xlsx'
+        phases['prepare'] = {'baseSha256': digest_of(candidate)}
+        stage = 'save'
+        phases['save'] = native('save', candidate, evidence['baseSha256'])
+        checkpoint()
+        stage = 'reopen'
+        # Read-only Open does not disable refresh-on-open. Inspect the saved package first.
+        saved = read_bounded(candidate, MAX_PACKAGE)
+        if sha(saved) != phases['save']['sha256']:
+            raise Blocked('Candidate changed after native save.')
+        checked_query_snapshot(saved)
+        phases['reopen'] = native('reopen', candidate, phases['save']['sha256'])
+        if (phases['reopen']['queries'] != expected
+                or phases['reopen']['connection'] != noop_read['connection']):
+            raise Blocked('Independent native reopen did not read the approved formulas or original connection.')
+        checkpoint()
+        stage = 'verify'
+        args.command = 'pq-verify'
+        args.reopened_sha256 = phases['reopen']['sha256']
+        args.save_evidence = 'report.json phases/save'
+        args.reopen_evidence = 'report.json phases/reopen'
+        power_query_import(root, store, args)
+        verification = preview_path(store, args.label) / 'manifest.json'
+        phases['verify'] = json.loads(read_bounded(verification, MAX_XML))
+        evidence['status'] = 'verified'
+    except BaseException as error:
+        evidence['failure'] = {'phase': stage, 'reason': str(error) or type(error).__name__}
+        raise
+    finally:
+        for key, path in (('base', base), ('sync', sync)):
+            before = evidence.get(f'{key}Sha256')
+            if before is not None:
+                try:
+                    unchanged = digest_of(path) == before
+                except (OSError, Blocked):
+                    unchanged = False
+                evidence[f'{key}Unchanged'] = unchanged
+                if not unchanged:
+                    evidence['status'] = 'blocked'
+                    evidence.setdefault('failure', {'phase': 'integrity', 'reason': f'The {key} changed.'})
+        checkpoint()
+    if evidence['status'] != 'verified':
+        raise Blocked('Base or sync changed; do not use this copy.')
+    print(f'Verified disposable candidate: {candidate}\nPrivate evidence: {report}')
 
 
 def main():
@@ -928,8 +1100,13 @@ def main():
     verify_cmd.add_argument('--reopen-evidence', required=True, help='Reference to independent desktop reopen evidence.')
     for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd, plan_cmd, prepare_cmd, verify_cmd):
         command.add_argument('--store', required=True, help='Existing private, access-controlled directory outside Git.')
+    pilot = commands.add_parser('pq-pilot', help='Run the disposable native Power Query pilot on Windows.')
+    pilot.add_argument('--desktop', action='store_true', help='Authorize Excel to create a fresh synthetic fixture.')
     args = parser.parse_args()
     try:
+        if args.command == 'pq-pilot':
+            native_pq_pilot(args.desktop)
+            return 0
         result = git(Path.cwd(), 'rev-parse', '--show-toplevel')
         if result.returncode:
             raise Blocked('Run from a Git worktree.')
