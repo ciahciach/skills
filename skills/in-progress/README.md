@@ -16,4 +16,5 @@ npx skills@latest add mattpocock/skills --skill=<name>
 - **[setup-ts-deep-modules](./setup-ts-deep-modules/SKILL.md)**: Wire dependency-cruiser into a TypeScript repo so each package is a deep module: implementation hidden in subfolders, reachable only through its entry-point files, tests exercising it through those. User-invoked.
 - **[setup-excel-repo](./setup-excel-repo/SKILL.md)**: Configure or adopt a repository scaffold for Excel workbook versioning, even before the first workbook. User-invoked.
 - **[excel-router](./excel-router/SKILL.md)**: Route Windows Excel work in Kilo VS Code by operation, profile and evidence before choosing a backend. Model-invoked.
+- **[excel-com-safe](./excel-com-safe/SKILL.md)**: Use explicitly selected Windows Excel COM safely, including bounded synthetic formula and native UserForm probes. Model-invoked.
 - **[software-factory](./software-factory/SKILL.md)**: Shared language for designing a software factory: the tasks it runs and the services it plugs into. Call it alongside a grilling session. User-invoked.
