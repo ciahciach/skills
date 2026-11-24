@@ -122,8 +122,12 @@ User invokes with a map (URL or number). A ticket is **optional**: without one, 
 1. Load the **map**: the low-res view, not every ticket body.
 2. Choose the ticket. If the user named one, use it. Otherwise take the first frontier ticket in order. **Claim it**: assign it to yourself before any work.
 3. Resolve it as the type its `wayfinder:<type>` label names (see [Ticket Types](#ticket-types)). Read the label, not just the body: the body never states the type. **Zoom as needed**: fetch the full body of any related or closed ticket on demand; call the Skill tool for whichever skills the `## Notes` block names. If in doubt, call the Skill tool twice, for "grilling" and "domain-modeling".
-4. Record the resolution: post the answer as a **resolution comment**, **close** the issue, and **append a context pointer** to the map's Decisions-so-far.
-5. Add newly-surfaced tickets (create-then-wire); graduate any fog the answer has made specifiable, clearing each graduated patch from **Not yet specified** so it lives only as its new ticket. If the answer reveals that a ticket (this one or another) sits beyond the destination, **rule it out of scope** rather than resolving it on the route. If the decision invalidates other parts of the map, update or delete those tickets.
+4. For **partial acceptance**, record the boundary before closing. Acceptance of one scope does not carry over to another.
+   - If you split scopes that need separate acceptance, create tickets for the remaining work as direct children of the same map. Use the tracker's **Wayfinding operations** to verify each child relationship before treating the scope as moved. A ticket link alone does not verify parentage.
+   - On the original, record **Accepted** (the exact scope) and **Still open** (each remaining scope and its owner: the original or a link to the verified child).
+   - If any remaining scope stays on the original, leave it open and out of **Decisions so far**.
+5. Once the ticket is fully resolved or all remaining scope has moved to verified direct children, record the answer as a **resolution comment** (use the boundary comment above for partial acceptance), **close** the issue, and **append a context pointer** to **Decisions so far** that summarizes only the resolved scope.
+6. Add newly-surfaced tickets (create-then-wire); graduate any fog the answer has made specifiable, clearing each graduated patch from **Not yet specified** so it lives only as its new ticket. If the answer reveals that a ticket (this one or another) sits beyond the destination, **rule it out of scope** rather than resolving it on the route. If the decision invalidates other parts of the map, update or delete those tickets.
 
 The user may run unblocked tickets in parallel, so expect other sessions to be editing the tracker concurrently.
 
