@@ -3,6 +3,7 @@ import csv
 import hashlib
 from io import BytesIO, TextIOWrapper
 import json
+import os
 from pathlib import Path
 import runpy
 import stat
@@ -19,6 +20,56 @@ SCRIPT = Path(__file__).with_name('excel-onboarding.py')
 SHEET = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 OFFICE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
+
+
+class NativePilotTest(unittest.TestCase):
+    def test_first_excel_save_revision_transition_is_narrow(self):
+        verify = runpy.run_path(str(SCRIPT))['excel_copy_metadata_changes']
+
+        def workbook(prefix: str, digit: str, revision: str = '0') -> bytes:
+            data = BytesIO()
+            guid = f'{digit * 8}-{digit * 4}-{digit * 4}-{digit * 4}-{digit * 12}'
+            with ZipFile(data, 'w') as book:
+                book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" '
+                              'xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">'
+                              f'<xr:revisionPtr revIDLastSave="{revision}" documentId="{prefix}_{{{guid}}}"/>'
+                              '</workbook>')
+            return data.getvalue()
+
+        base = workbook('8', '1')
+        saved = workbook('13_ncr:1', '2')
+        self.assertEqual(verify(base, saved, Path.cwd()), ['revisionPtr.documentId'])
+        self.assertIsNone(verify(saved, base, Path.cwd()))
+        self.assertIsNone(verify(workbook('9', '1'), saved, Path.cwd()))
+        self.assertIsNone(verify(base, workbook('13_ncr:1', '2', revision='1'), Path.cwd()))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows ACL regression')
+    def test_attempt_storage_does_not_inherit_broad_access(self):
+        onboarding = runpy.run_path(str(SCRIPT))
+        temp_parent = Path(tempfile.gettempdir()).resolve() / 'kilo'
+        temp_parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temp_parent) as name:
+            parent = Path(name).resolve()
+            subprocess.run(['icacls.exe', str(parent), '/grant', '*S-1-5-32-545:(OI)(CI)(RX)'],
+                           check=True, capture_output=True, timeout=60)
+            with self.assertRaisesRegex(onboarding['Blocked'], 'platform administrators'):
+                onboarding['require_private'](parent)
+            attempt, fixture, store = onboarding['create_pilot_workspace'](parent)
+            self.assertEqual(attempt.parent, parent)
+            self.assertTrue(fixture.is_dir() and store.is_dir())
+            evidence = store / 'report.json'
+            evidence.write_text('{}', encoding='utf-8')
+            onboarding['require_private'](attempt)
+            onboarding['require_private'](fixture, store, evidence, store / 'not-created-yet')
+            with self.assertRaisesRegex(onboarding['Blocked'], 'platform administrators'):
+                onboarding['require_private'](parent)
+
+    def test_requires_an_explicit_desktop_request(self):
+        result = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(SCRIPT), 'pq-pilot'],
+                                stdin=subprocess.DEVNULL, capture_output=True, encoding='utf-8', timeout=90)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires explicit --desktop', result.stderr)
+        self.assertEqual(result.stdout, '')
 
 
 def make_writable(path: Path):
