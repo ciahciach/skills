@@ -16,6 +16,7 @@ You invoke this by typing `/ask-matt`; the agent won't reach for it on its own.
 | A long session and a decision about the [context](https://www.aihero.dev/ai-coding-dictionary/context) | The ordered tree over the five options at a phase boundary |
 | A skill you have already picked | Nothing useful. Invoke that skill directly. |
 | A repo that needs Excel workbook versioning | The optional `/setup-excel-repo` beta, run by the user even if there is no workbook yet |
+| An Excel workbook task in Kilo VS Code on Windows | The optional `excel-router` beta, if available; it selects a recipe or reports a blocker |
 
 ## Prerequisites
 
