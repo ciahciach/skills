@@ -49,7 +49,7 @@ Review and accept either starting path using the existing onboarding commands:
   python -X utf8 <script> publish candidate candidate --reviewed <candidate-sha256> --store <private-dir>
   git diff --no-index -- baseline/ordinary-formulas.json candidate/ordinary-formulas.json
 
-Before publishing, review all three text artifacts under <private-dir>/review
+Before publishing, review all text artifacts under <private-dir>/review
 for sensitive identifiers, numeric constants and logic. Pass the digest printed
 by export. Publication verifies the exact preview against the retained version.
 Stage only reviewed text files, never workbook binaries or a redacted preview. Acceptance
@@ -57,8 +57,10 @@ checks the published export again; later exports do not advance sync.
 
 Only exact A1 targets of standalone ordinary formulas are editable here. The
 inventory summarizes omissions, not instructions. No values, cached formula
-results, connection strings, query definitions or names' definitions are
-emitted. Shared and array formula records, spill ranges, what-if data tables,
+results, connection strings or names' definitions are emitted. Saved Power
+Query M and its inventory are separate artifacts for the restricted pilot
+profile; see the Excel repo contract for pq-plan, pq-prepare and pq-verify.
+Shared and array formula records, spill ranges, what-if data tables,
 and table-calculated columns are out of scope. Nonempty inline strings,
 recognized credential patterns and external formula references block the export.
 These checks are conservative, not a substitute for human review of identifiers
@@ -71,11 +73,12 @@ and backups. This command does not qualify an Excel runtime or edit workbook int
 
 import argparse
 from collections import Counter
+from dataclasses import dataclass
 import hashlib
 from io import BytesIO, TextIOWrapper
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import posixpath
 import re
 import stat
@@ -83,7 +86,10 @@ import subprocess
 import sys
 import tempfile
 from xml.etree import ElementTree as ET
+from xml.parsers import expat
 from zipfile import BadZipFile, ZipFile
+
+from excel_power_query import MODEL, M_SOURCE, QueryBlocked, check_expression, connection_query, read_mashup
 
 
 S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
@@ -105,10 +111,25 @@ CREDENTIAL = re.compile(
     r'|(?:akia|asia)[a-z0-9]{16})\b|\b(?:password|passwd|api[_ -]?key|client[_ -]?secret|access[_ -]?token)\s*[:=]'
 )
 EXTERNAL_FORMULA = re.compile(r'(?i)\[\d+\]|\[[^\]]*\.(?:xlsx?|xlsm|xlsb|xlam|csv)\]|://|\|')
+EVIDENCE_REF = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9 .:/_#-]{0,159}')
 
 
 class Blocked(Exception):
     pass
+
+
+@dataclass
+class QuerySnapshot:
+    part: str
+    workbook_part: str
+    queries: dict[str, str]
+    metadata: tuple[str, dict[str, bytes], bytes, bytes]
+    wiring: dict
+    risky_open: bool
+
+
+def refresh_on_load(node):
+    return node.get('refreshOnLoad') not in (None, 'false', '0')
 
 
 def sha(data):
@@ -235,7 +256,7 @@ def rectangle(reference):
     return left, top, right, bottom
 
 
-def workbook_artifacts(data, profile, *, format_only=False):
+def workbook_artifacts(data, profile, *, format_only=False, power_query=False):
     cells, sheets = [], []
     remaining = MAX_PACKAGE
     with ZipFile(BytesIO(data)) as book:
@@ -291,7 +312,14 @@ def workbook_artifacts(data, profile, *, format_only=False):
                              or target(part, vba_projects[0], VBA_PROJECT) not in names):
             raise Blocked('Saved workbook has a missing or unsupported VBA project part.')
         if format_only:
-            return [], {}
+            return [], {}, None
+        mashup = read_mashup(book, CREDENTIAL, min(MAX_XML, remaining)) if power_query else None
+        loads = []
+        query_tables = set()
+        risky_open = (bool(vba_projects) or any(row.get('TargetMode') == 'External' for row in links.values())
+                      or any('macrosheet' in row.get('Type', '').lower() for row in links.values())
+                      or any('macrosheet' in item.get('ContentType', '').lower() for item in content_types)
+                      or workbook.find(f'{S}externalReferences') is not None)
         sheet_names, sheet_parts = set(), set()
         for sheet in sheet_nodes.findall(f'{S}sheet'):
             name = sheet.attrib['name']
@@ -316,11 +344,24 @@ def workbook_artifacts(data, profile, *, format_only=False):
                 table_links = relationships(sheet_part)
             for table in table_parts:
                 relation = table_links[table.attrib[f'{{{OFFICE}}}id']]
-                definition = xml(target(sheet_part, relation, f'{OFFICE}/table'))
+                table_part = target(sheet_part, relation, f'{OFFICE}/table')
+                definition = xml(table_part)
                 left, top, right, bottom = rectangle(definition.attrib['ref'])
                 columns = definition.findall(f'{S}tableColumns/{S}tableColumn')
                 if definition.tag != f'{S}table' or len(columns) != right - left + 1:
                     raise Blocked('Unsupported table structure.')
+                if mashup is not None:
+                    for link in relationships(table_part).values():
+                        if link.get('Type') != f'{OFFICE}/queryTable':
+                            continue
+                        query_part = target(table_part, link, f'{OFFICE}/queryTable')
+                        query_table = xml(query_part)
+                        if query_part in query_tables or query_table.tag != f'{S}queryTable':
+                            raise Blocked('Unsupported query table mapping.')
+                        query_tables.add(query_part)
+                        risky_open |= refresh_on_load(query_table)
+                        loads.append({'connectionId': query_table.attrib['connectionId'], 'sheet': name,
+                                      'table': definition.attrib['name'], 'range': definition.attrib['ref']})
                 for col, column in enumerate(columns, left):
                     calculated = column.find(f'{S}calculatedColumnFormula') is not None
                     table_templates += calculated
@@ -361,15 +402,56 @@ def workbook_artifacts(data, profile, *, format_only=False):
                            'excludedByKind': dict(sorted(excluded_kinds.items())),
                            'tables': len(table_parts), 'calculatedColumnTemplates': table_templates})
 
+        query_snapshot = None
+        if mashup is not None:
+            mashup_part, queries, preservation = mashup
+            connections = []
+            connection_links = [link for link in links.values() if link.get('Type') == f'{OFFICE}/connections']
+            if len(connection_links) > 1:
+                raise Blocked('Unsupported workbook connection mapping.')
+            if connection_links:
+                connection_root = xml(target(part, connection_links[0], f'{OFFICE}/connections'))
+                if connection_root.tag != f'{S}connections':
+                    raise Blocked('Unsupported workbook connection mapping.')
+                for connection in connection_root.findall(f'{S}connection'):
+                    db = connection.find(f'{S}dbPr')
+                    mapping = (connection_query(db.get('connection', ''), db.get('command'), queries)
+                               if db is not None and db.get('commandType', '2') == '2' else None)
+                    connection_id = connection.attrib['id']
+                    if not re.fullmatch(r'[1-9][0-9]{0,9}', connection_id):
+                        raise Blocked('Unsupported workbook connection ID.')
+                    connections.append({'id': connection_id, 'query': mapping})
+                    risky_open |= mapping is None or refresh_on_load(connection) or connection.get('interval', '0') != '0'
+            ids = {item['id'] for item in connections}
+            declared_tables = {item.get('PartName', '').lstrip('/') for item in content_types
+                               if item.get('ContentType', '').endswith('spreadsheetml.queryTable+xml')}
+            if (len(ids) != len(connections) or any(load['connectionId'] not in ids for load in loads)
+                    or declared_tables != query_tables):
+                raise Blocked('Incomplete Power Query load wiring.')
+            for item in content_types:
+                if item.get('ContentType', '').endswith('spreadsheetml.pivotCacheDefinition+xml'):
+                    cache = xml(item.attrib['PartName'].lstrip('/'))
+                    risky_open |= refresh_on_load(cache)
+            for load in loads:
+                if CREDENTIAL.search(load['table']):
+                    raise Blocked('Publication blocked: possible credential in table name.')
+            has_model = (any(MODEL.search(name) for name in names)
+                         or any('model+data' in item.get('ContentType', '').lower() for item in content_types)
+                         or any(link.get('Type', '').endswith('/model') for link in links.values()))
+            wiring = {'kind': 'inventory-only', 'hasDataModel': has_model,
+                      'connections': sorted(connections, key=lambda row: int(row['id'])),
+                      'worksheetLoads': sorted(loads, key=lambda row: (row['sheet'], row['table']))}
+            query_snapshot = QuerySnapshot(mashup_part, part, queries, preservation, wiring, risky_open)
+
     inventory = {'kind': 'inventory-only', 'sheets': sheets,
                  'definedNames': len(workbook.findall(f'{S}definedNames/{S}definedName')),
                  'externalReferences': len(workbook.findall(f'{S}externalReferences/{S}externalReference')),
                  'hasConnectionsPart': any(row.get('Type') == f'{OFFICE}/connections' for row in links.values())}
-    return cells, inventory
+    return cells, inventory, query_snapshot
 
 
-def build_export(data, workbook, template=None, desktop_verified=None):
-    cells, inventory = workbook_artifacts(data, Path(workbook).suffix.lower())
+def build_export(data, workbook, template=None, desktop_verified=None, *, power_query=False):
+    cells, inventory, query_snapshot = workbook_artifacts(data, Path(workbook).suffix.lower(), power_query=power_query)
     for value in [workbook, *(sheet['sheet'] for sheet in inventory['sheets'])]:
         if CREDENTIAL.search(value):
             raise Blocked('Publication blocked: possible credential in workbook metadata.')
@@ -381,6 +463,11 @@ def build_export(data, workbook, template=None, desktop_verified=None):
             raise Blocked('Publication blocked: an external formula is outside the supported export profile.')
     artifacts = {'ordinary-formulas.json': json_bytes({'kind': 'editable-ordinary-formulas', 'cells': cells}),
                  'inventory.json': json_bytes(inventory)}
+    if power_query:
+        if query_snapshot is None:
+            raise Blocked('No supported saved Power Query M was found.')
+        artifacts['power-query.json'] = json_bytes({'kind': M_SOURCE, 'queries': dict(sorted(query_snapshot.queries.items()))})
+        artifacts['power-query-inventory.json'] = json_bytes(query_snapshot.wiring)
     metadata = {'schema': 1, 'workbook': workbook, 'versionSha256': sha(data),
                 'files': {name: sha(content) for name, content in artifacts.items()}}
     if template is not None:
@@ -502,7 +589,7 @@ def verify_desktop_attestation(template, attested, version):
         raise Blocked('The desktop-verified checksum does not match the saved workbook.')
 
 
-def export(root, store, workbook, label, template=None, desktop_verified=None):
+def export(root, store, workbook, label, template=None, desktop_verified=None, *, power_query=False):
     source = workbook_path(root, workbook, template)
     preview = preview_path(store, label)
     if preview.exists():
@@ -512,7 +599,8 @@ def export(root, store, workbook, label, template=None, desktop_verified=None):
     verify_desktop_attestation(template, desktop_verified, version)
     if template is not None and verified_template(store, template) != data:
         raise Blocked('Saved XLSM differs from the pinned template; no initial export was produced.')
-    artifacts = build_export(data, source.relative_to(root).as_posix(), template, desktop_verified)
+    artifacts = build_export(data, source.relative_to(root).as_posix(), template, desktop_verified,
+                             power_query=power_query)
     retained = store / 'versions' / f'{version}{source.suffix.lower()}'
     require_private(store, preview.parent, retained.parent, retained)
     retained.parent.mkdir(mode=0o700, exist_ok=True)
@@ -542,7 +630,8 @@ def verified_export(root, store, folder, reviewed):
     data = retained_bytes(retained, version)
     if template is not None and verified_template(store, template) != data:
         raise Blocked('Retained XLSM does not match the pinned template.')
-    artifacts = build_export(data, workbook.relative_to(root).as_posix(), template, desktop_verified)
+    artifacts = build_export(data, workbook.relative_to(root).as_posix(), template, desktop_verified,
+                             power_query='power-query.json' in metadata['files'])
     if ({file.name for file in folder.iterdir()} != artifacts.keys()
             or any(read_bounded(folder / name, MAX_PACKAGE) != content for name, content in artifacts.items())):
         raise Blocked('Export no longer matches the retained workbook and reviewed manifest.')
@@ -559,12 +648,255 @@ def accept_initial(root, store, candidate, reviewed):
     print('Accepted the first synchronization point.')
 
 
+def preserved_parts(data, mashup_part, *, allow_cell_values=False):
+    with ZipFile(BytesIO(data)) as book:
+        if sum(part.file_size for part in book.infolist()) > MAX_PACKAGE:
+            raise Blocked('Workbook exceeds the package comparison limit.')
+        checked = {}
+        for name in book.namelist():
+            if name == mashup_part:
+                continue
+            raw = book.read(name)
+            if name == 'docProps/core.xml':
+                if b'xmlns:dcterms="http://purl.org/dc/terms/"' in raw and b'<!' not in raw:
+                    raw = re.sub(rb'(<dcterms:modified(?:\s+[^<>]*)?>)\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ'
+                                 rb'(</dcterms:modified>)', rb'\1\2', raw, count=1)
+            elif allow_cell_values and re.fullmatch(r'xl/worksheets/sheet\d+\.xml', name):
+                text = raw.decode('utf-8-sig')
+                if '\0' in text or '<!DOCTYPE' in text or '<!ENTITY' in text:
+                    raise Blocked('Unsupported workbook XML.')
+                node = ET.fromstring(text, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True, insert_pis=True)))
+                if node.tag == f'{S}worksheet':
+                    for cell in node.findall(f'{S}sheetData/{S}row/{S}c'):
+                        if cell.get('t') not in (None, 'n', 'b') or cell.find(f'{S}f') is not None:
+                            continue
+                        for value in cell.findall(f'{S}v'):
+                            value.text = None
+                raw = ET.tostring(node)
+            checked[name] = sha(raw)
+    return checked
+
+
+def excel_copy_metadata_changes(base, result, folder):
+    part = 'xl/workbook.xml'
+    with ZipFile(BytesIO(base)) as before, ZipFile(BytesIO(result)) as after:
+        old, new = before.read(part), after.read(part)
+    if old == new:
+        return []
+
+    workbook = S[1:-1] + ' workbook'
+    mc = 'http://schemas.openxmlformats.org/markup-compatibility/2006 '
+    targets = {
+        (workbook, mc + 'AlternateContent', mc + 'Choice',
+         'http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac absPath'): ('absPath.url', 'url'),
+        (workbook, 'http://schemas.microsoft.com/office/spreadsheetml/2014/revision revisionPtr'):
+            ('revisionPtr.documentId', 'documentId'),
+    }
+    attribute = rb'''[ \t\r\n]+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')'''
+    start_tag = re.compile(rb'<[^\s/>]+((?:' + attribute + rb')*)\s*/?>')
+
+    def spans(raw):
+        found: dict[str, list[tuple[str, int, int]]] = {}
+        if b'<!' in raw or b'\0' in raw:
+            return found
+        parser = expat.ParserCreate(namespace_separator=' ')
+        stack: list[str] = []
+
+        def start(name, attrs):
+            stack.append(name)
+            target = targets.get(tuple(stack))
+            if target is None:
+                return
+            field, key = target
+            offset = parser.CurrentByteIndex
+            tag = start_tag.match(raw, offset)
+            if tag is None:
+                return
+            for match in re.finditer(attribute, tag[1]):
+                if match[1] == key.encode('ascii'):
+                    left, right = match.span(2 if match[2] is not None else 3)
+                    found.setdefault(field, []).append((attrs[key], tag.start(1) + left, tag.start(1) + right))
+
+        parser.StartElementHandler = start
+        parser.EndElementHandler = lambda _: stack.pop()
+        parser.Parse(raw, True)
+        return found
+
+    try:
+        left, right = spans(old), spans(new)
+    except expat.ExpatError:
+        return None
+    changes = []
+    edits: tuple[list[tuple[int, int]], list[tuple[int, int]]] = ([], [])
+    for field, _ in targets.values():
+        if len(left.get(field, [])) != 1 or len(right.get(field, [])) != 1:
+            continue
+        (a, a_start, a_end), = left[field]
+        (b, b_start, b_end), = right[field]
+        if a == b:
+            continue
+        if field == 'absPath.url':
+            # The original may have been copied since Excel last saved it.
+            local = r'[A-Za-z]:\\(?:[^<>:"/\\|?*\x00-\x1f]+\\)*'
+            if (not re.fullmatch(local, a) or not re.fullmatch(local, b)
+                    or '..' in PureWindowsPath(a).parts or b != str(folder).rstrip('\\') + '\\'):
+                continue
+        elif not all(re.fullmatch(r'13_ncr:1_\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}', value)
+                     for value in (a, b)):
+            continue
+        changes.append(field)
+        edits[0].append((a_start, a_end))
+        edits[1].append((b_start, b_end))
+
+    def masked(raw, ranges):
+        for start, end in sorted(ranges, reverse=True):
+            raw = raw[:start] + raw[end:]
+        return raw
+
+    # Compare original XML bytes except for the two validated attribute values.
+    return changes if masked(old, edits[0]) == masked(new, edits[1]) else None
+
+
+def checked_query_snapshot(data):
+    _, _, snapshot = workbook_artifacts(data, '.xlsx', power_query=True)
+    if snapshot is None:
+        raise Blocked('No supported saved Power Query M was found.')
+    if snapshot.wiring['hasDataModel'] or snapshot.risky_open:
+        raise Blocked('Data Model, unknown connections, or unsafe opening effects are outside the M pilot.')
+    return snapshot
+
+
+def unique_json_object(pairs):
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise Blocked('Duplicate keys in the M edit are not allowed.')
+    return result
+
+
+def power_query_import(root, store, args):
+    # Every phase recomputes the plan against the original and the approved sync.
+    sync_file = store / 'sync.json'
+    preview = preview_path(store, args.label)
+    attempt = repo_path(store, f'candidates/{args.label}')
+    candidate = attempt / 'workbook.xlsx'
+    receipt = attempt / 'plan.json'
+    lock = candidate.with_name('~$' + candidate.name)
+    require_private(store, sync_file, preview.parent, attempt.parent, attempt, candidate, receipt)
+    if lock.exists():
+        raise Blocked('Candidate workbook lock file exists; close Excel before proceeding.')
+    if preview.exists() or (args.command != 'pq-verify' and attempt.exists()):
+        raise Blocked('Choose a new candidate label; a failed attempt must not be reused.')
+    if not EVIDENCE_REF.fullmatch(args.qualified_route) or CREDENTIAL.search(args.qualified_route):
+        raise Blocked('Supply a qualified route and version evidence reference.')
+    sync_bytes = read_bounded(sync_file, MAX_XML)
+    sync = json.loads(sync_bytes)
+    metadata, baseline = verified_export(root, store, repo_path(root, args.baseline), sync['manifestSha256'])
+    profile = Path(metadata['workbook']).suffix.lower()
+    if profile != '.xlsx':
+        raise Blocked('The Power Query pilot supports synthetic XLSX only.')
+    if any(sync.get(key) != metadata[key] for key in ('schema', 'workbook', 'versionSha256')):
+        raise Blocked('The approved sync does not identify the retained workbook.')
+    source = workbook_path(root, metadata['workbook'], None)
+    data = read_bounded(source, MAX_PACKAGE)
+    base_digest = sha(data)
+    snapshot = checked_query_snapshot(data)
+    edit = read_bounded(repo_path(root, args.edit), MAX_XML)
+    proposed = json.loads(edit, object_pairs_hook=unique_json_object)
+    if (not isinstance(proposed, dict) or set(proposed) != {'kind', 'queries'} or proposed['kind'] != M_SOURCE
+            or not isinstance(proposed['queries'], dict) or baseline.get('power-query.json') is None):
+        raise Blocked('Use the editable M artifact, not an inventory or other edit input.')
+    expected = proposed['queries']
+    approved_queries = json.loads(baseline['power-query.json'])['queries']
+    if expected.keys() != approved_queries.keys():
+        raise Blocked('Standard M import does not create, rename, or remove queries.')
+    changes = [name for name in approved_queries if approved_queries[name] != expected[name]]
+    if len(changes) != 1:
+        raise Blocked('The M pilot requires one changed existing query.')
+    query, = changes
+    check_expression(expected[query], CREDENTIAL)
+    if snapshot.queries != approved_queries:
+        changed = sorted(name for name in snapshot.queries.keys() | approved_queries.keys()
+                         if snapshot.queries.get(name) != approved_queries.get(name))
+        raise Blocked('Managed drift; no merge was attempted. Saved workbook vs sync: changed M or membership for '
+                      f'{", ".join(changed)}. Proposed M vs sync: changed M for {query}.')
+    target_ids = {connection['id'] for connection in snapshot.wiring['connections'] if connection['query'] == query}
+    if (len(snapshot.queries) < 2 or not any(load['connectionId'] in target_ids
+                                           for load in snapshot.wiring['worksheetLoads'])):
+        raise Blocked('The pilot requires a verified worksheet load for the edited query and an adjacent query.')
+    if base_digest != metadata['versionSha256']:
+        version = metadata['versionSha256']
+        retained = retained_bytes(store / 'versions' / f'{version}.xlsx', version)
+        previous = checked_query_snapshot(retained)
+        if previous != snapshot or (preserved_parts(retained, previous.part, allow_cell_values=True)
+                                    != preserved_parts(data, snapshot.part, allow_cell_values=True)):
+            raise Blocked('Saved workbook differs from approved sync beyond supported data-only drift.')
+    plan = {'kind': 'power-query-import-plan', 'workbook': metadata['workbook'], 'baseSha256': base_digest,
+            'syncSha256': sha(sync_bytes), 'editSha256': sha(edit), 'query': query, 'candidate': args.label,
+            'qualifiedRoute': args.qualified_route, 'profile': 'synthetic-xlsx',
+            'checks': ['all saved M', 'load wiring', 'adjacent workbook parts'],
+            'excelSaveMetadataPolicy': 'local-copy-path-and-revision-guid-v1', 'refresh': False}
+    plan_digest = sha(json_bytes(plan))
+    if args.command == 'pq-plan':
+        print(json_bytes({**plan, 'planSha256': plan_digest}).decode('utf-8'), end='')
+        return
+    if args.approved_plan != plan_digest:
+        raise Blocked('The approved plan checksum does not match the current inputs.')
+    workbook_path(root, metadata['workbook'], None)
+    if (read_bounded(source, MAX_PACKAGE) != data or read_bounded(sync_file, MAX_XML) != sync_bytes
+            or read_bounded(repo_path(root, args.edit), MAX_XML) != edit or lock.exists()):
+        raise Blocked('Inputs changed during the eligibility recheck.')
+    if args.command == 'pq-prepare':
+        attempt.parent.mkdir(mode=0o700, exist_ok=True)
+        write_export(attempt, {candidate.name: data, receipt.name: json_bytes({'planSha256': plan_digest})})
+        print('Prepared a disposable private copy. No Excel write or refresh was performed.')
+        return
+
+    if not receipt.is_file() or read_bounded(receipt, MAX_XML) != json_bytes({'planSha256': plan_digest}):
+        raise Blocked('No matching preparation receipt for this candidate.')
+    for evidence in (args.save_evidence, args.reopen_evidence):
+        if not EVIDENCE_REF.fullmatch(evidence) or CREDENTIAL.search(evidence):
+            raise Blocked('Supply separate operator evidence references for save and independent reopen.')
+    result = read_bounded(candidate, MAX_PACKAGE)
+    digest = sha(result)
+    if args.reopened_sha256 != digest or digest == base_digest:
+        raise Blocked('Independent desktop reopen must attest the exact changed candidate checksum.')
+    observed = checked_query_snapshot(result)
+    if observed.queries != expected:
+        raise Blocked('Saved M differs from the approved edit or an adjacent query changed.')
+    if observed.wiring != snapshot.wiring:
+        raise Blocked('Power Query load wiring changed.')
+    before = preserved_parts(data, snapshot.part)
+    after = preserved_parts(result, observed.part)
+    workbook_changed = False
+    if snapshot.workbook_part == observed.workbook_part == 'xl/workbook.xml':
+        workbook_changed = before.pop('xl/workbook.xml') != after.pop('xl/workbook.xml')
+    if observed.part != snapshot.part or observed.metadata != snapshot.metadata or before != after:
+        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+    save_metadata = excel_copy_metadata_changes(data, result, candidate.parent) if workbook_changed else []
+    if save_metadata is None:
+        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+    artifacts = build_export(result, metadata['workbook'], power_query=True)
+    # This evidence is intentionally not a publishable onboarding export or a sync update.
+    artifacts['manifest.json'] = json_bytes({'kind': 'power-query-saved-package-verification', 'planSha256': plan_digest,
+                                            'candidateSha256': digest,
+                                            'excelSaveMetadataChanges': save_metadata,
+                                            'operatorAttestations': {'qualifiedRoute': args.qualified_route,
+                                                                     'save': args.save_evidence,
+                                                                     'reopen': args.reopen_evidence},
+                                            'files': {name: sha(content) for name, content in artifacts.items()
+                                                      if name != 'manifest.json'}})
+    preview.parent.mkdir(mode=0o700, exist_ok=True)
+    write_export(preview, artifacts)
+    print('Verified saved M, load wiring and adjacent parts. Desktop save and reopen were operator-attested.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     export_cmd = commands.add_parser('export', help='Export one saved workbook for private review.')
     export_cmd.add_argument('workbook', help='Workbook path relative to the Git worktree root.')
     export_cmd.add_argument('label', help='New label for the private review directory.')
+    export_cmd.add_argument('--power-query', action='store_true', help='Also export the restricted saved M and load inventory.')
     export_cmd.add_argument('--desktop-verified', metavar='WORKBOOK_SHA256',
                             help='Attest qualified, authorized desktop readback for the exact saved workbook.')
     copy_cmd = commands.add_parser('copy-template', help='Make a byte-exact working copy of a pinned XLSM.')
@@ -579,7 +911,22 @@ def main():
     accept_cmd.add_argument('candidate', help='Reviewed export directory relative to the Git worktree root.')
     for command in (publish_cmd, accept_cmd):
         command.add_argument('--reviewed', required=True, help='SHA-256 of the manifest you reviewed.')
-    for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd):
+    plan_cmd = commands.add_parser('pq-plan', help='Plan an existing-query M edit without writing anything.')
+    prepare_cmd = commands.add_parser('pq-prepare', help='Recheck the approved plan and stage an XLSX copy.')
+    verify_cmd = commands.add_parser('pq-verify', help='Re-export and verify an independently reopened XLSX copy.')
+    for command in (plan_cmd, prepare_cmd, verify_cmd):
+        command.add_argument('baseline', help='Published export at the approved synchronization point.')
+        command.add_argument('edit', help='Worktree-relative path to the proposed power-query.json.')
+        command.add_argument('label', help='Private candidate label, unique for each attempt.')
+        command.add_argument('--qualified-route', required=True,
+                             help='Attest a qualified, authorized desktop route; identify implementation/version and evidence.')
+    for command in (prepare_cmd, verify_cmd):
+        command.add_argument('--approved-plan', required=True, help='SHA-256 from the reviewed dry-run.')
+    verify_cmd.add_argument('--reopened-sha256', required=True,
+                            help='Attest independent desktop readback of the exact saved candidate bytes.')
+    verify_cmd.add_argument('--save-evidence', required=True, help='Reference to the operator record of desktop save.')
+    verify_cmd.add_argument('--reopen-evidence', required=True, help='Reference to independent desktop reopen evidence.')
+    for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd, plan_cmd, prepare_cmd, verify_cmd):
         command.add_argument('--store', required=True, help='Existing private, access-controlled directory outside Git.')
     args = parser.parse_args()
     try:
@@ -591,14 +938,17 @@ def main():
         if args.command == 'copy-template':
             copy_template(root, store, args.workbook, args.template_sha256)
         elif args.command == 'export':
-            export(root, store, args.workbook, args.label, args.template_sha256, args.desktop_verified)
+            export(root, store, args.workbook, args.label, args.template_sha256, args.desktop_verified,
+                   power_query=args.power_query)
         elif args.command == 'publish':
             _, artifacts = verified_export(root, store, preview_path(store, args.label), args.reviewed)
             write_export(repo_path(root, args.destination), artifacts)
             print('Published the reviewed export. No Git staging or synchronization performed.')
-        else:
+        elif args.command == 'accept-initial':
             accept_initial(root, store, args.candidate, args.reviewed)
-    except Blocked as error:
+        else:
+            power_query_import(root, store, args)
+    except (Blocked, QueryBlocked) as error:
         print(f'Blocked: {error}', file=sys.stderr)
         return 1
     except (OSError, ValueError, KeyError, TypeError, ET.ParseError, BadZipFile, RuntimeError, NotImplementedError):
