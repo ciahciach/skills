@@ -71,6 +71,7 @@ class OnboardingTest(unittest.TestCase):
         self.repo.mkdir()
         subprocess.run(['git', 'init', '-q'], cwd=self.repo, check=True)
         self.store = fixture / 'private-store'
+        # Python 3.13+ applies mode 0700 as a private directory ACL on Windows.
         self.store.mkdir(mode=0o700)
         self.book = self.repo / 'model.xlsx'
         (self.repo / 'AGENTS.md').write_text('Prepared fixture. See docs/agents/excel.md.\n', encoding='utf-8')
@@ -195,6 +196,24 @@ class OnboardingTest(unittest.TestCase):
         save_fixture(self.book, '2+2', macros=True)
         error = self.export('baseline', ok=False)
         self.assertIn('Saved workbook format does not match .XLSX', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_export_rejects_store_readable_by_other_users(self):
+        save_fixture(self.book, '2+2')
+        if sys.platform == 'win32':
+            # Grant Everyone read access to this empty synthetic store only.
+            subprocess.run(['icacls.exe', str(self.store), '/grant', '*S-1-1-0:(R)'],
+                           check=True, timeout=30)
+        else:
+            self.store.chmod(0o755)
+        error = self.export('baseline', ok=False)
+        self.assertIn('private store must grant access only to the operator', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_export_rejects_workbook_outside_worktree(self):
+        save_fixture(self.repo.parent / 'outside.xlsx', '2+2')
+        error = self.cli('export', '../outside.xlsx', 'baseline', ok=False)
+        self.assertIn('Use a path relative to the Git worktree root.', error)
         self.assertEqual(list(self.store.iterdir()), [])
 
     def test_saved_blank_xlsx_uses_the_same_initial_acceptance(self):

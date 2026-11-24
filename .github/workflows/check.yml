@@ -26,3 +26,36 @@ jobs:
 
       - name: Check frontmatter
         run: npm run check-frontmatter
+
+  excel-cli:
+    name: Excel CLI tests and typing
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        timeout-minutes: 2
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        timeout-minutes: 3
+        with:
+          python-version: '3.14'
+
+      - name: Install mypy
+        id: install-mypy
+        timeout-minutes: 3
+        run: python -X utf8 -m pip install mypy==2.3.1
+
+      - name: Run synthetic onboarding CLI tests
+        if: ${{ !cancelled() && steps.setup-python.outcome == 'success' }}
+        timeout-minutes: 30
+        run: python -X utf8 -m unittest discover -s scripts -v
+
+      - name: Typecheck Excel scripts and tests
+        if: ${{ !cancelled() && steps.install-mypy.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python -X utf8 -m mypy --check-untyped-defs scripts/excel-onboarding.py scripts/excel_power_query.py scripts/test_excel_onboarding.py
