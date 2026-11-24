@@ -89,6 +89,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+from uuid import uuid4
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 from zipfile import BadZipFile, ZipFile
@@ -173,6 +174,8 @@ def require_private(*paths):
     existing = [path for path in paths if path.exists()]
     if any(path.resolve() != path for path in paths):
         raise Blocked('The private store must not contain path aliases.')
+    if not existing:
+        return
     if os.name == 'posix':
         uid = os.geteuid()  # type: ignore[attr-defined]  # POSIX only
         if any(path.stat().st_uid != uid or path.stat().st_mode & 0o077 for path in existing):
@@ -185,10 +188,15 @@ def require_private(*paths):
                     $sid = [Security.Principal.SecurityIdentifier]
                     $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,
                                  'S-1-5-18', 'S-1-5-32-544')
-                    foreach ($path in (ConvertFrom-Json -InputObject $env:EXCEL_ONBOARDING_ACL_PATHS)) {
-                        $acl = Get-Acl -LiteralPath $path
+                    $sections = [Security.AccessControl.AccessControlSections]'Access, Owner'
+                    foreach ($path in $env:EXCEL_ONBOARDING_ACL_PATHS.Split("`n")) {
+                        if ([IO.Directory]::Exists($path)) {
+                            $acl = [IO.Directory]::GetAccessControl($path, $sections)
+                        } else {
+                            $acl = [IO.File]::GetAccessControl($path, $sections)
+                        }
                         $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
-                        if ($null -eq $raw.DiscretionaryAcl -or $acl.GetOwner($sid).Value -notin $allowed) { exit 1 }
+                        if ($null -eq $raw.DiscretionaryAcl -or $raw.Owner.Value -notin $allowed) { exit 1 }
                         foreach ($rule in $acl.GetAccessRules($true, $true, $sid)) {
                             if ($rule.AccessControlType -eq 'Allow' -and
                                 $rule.IdentityReference.Value -notin ($allowed + 'S-1-3-4')) {
@@ -196,11 +204,19 @@ def require_private(*paths):
                             }
                         }
                     }
-                } catch { exit 1 }
+                } catch {
+                    [Console]::Error.WriteLine($_.Exception.GetBaseException().GetType().Name)
+                    exit 2
+                }
                 exit 0
-            '''], env={**os.environ, 'EXCEL_ONBOARDING_ACL_PATHS': json.dumps([str(path) for path in existing])},
+            '''], env={**os.environ, 'EXCEL_ONBOARDING_ACL_PATHS': '\n'.join(map(str, existing))},
             capture_output=True,
         )
+        if result.returncode != 0 and result.returncode != 1:
+            detail = result.stderr.decode('ascii', errors='ignore').strip()
+            if not re.fullmatch(r'[A-Za-z]+Exception', detail):
+                detail = f'exit {result.returncode}'
+            raise Blocked(f'Could not read the Windows private-store ACL ({detail}).')
         if result.returncode:
             raise Blocked(code)
     else:
@@ -746,9 +762,11 @@ def excel_copy_metadata_changes(base, result, folder):
             if (not re.fullmatch(local, a) or not re.fullmatch(local, b)
                     or '..' in PureWindowsPath(a).parts or b != str(folder).rstrip('\\') + '\\'):
                 continue
-        elif not all(re.fullmatch(r'13_ncr:1_\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}', value)
-                     for value in (a, b)):
-            continue
+        else:
+            guid = r'\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}'
+            # Fresh local SaveAs can emit 8_{GUID}; reopening and saving switches to 13_ncr:1_{GUID}.
+            if not re.fullmatch(r'(?:8|13_ncr:1)_' + guid, a) or not re.fullmatch(r'13_ncr:1_' + guid, b):
+                continue
         changes.append(field)
         edits[0].append((a_start, a_end))
         edits[1].append((b_start, b_end))
@@ -858,7 +876,7 @@ def power_query_import(root, store, args):
             'syncSha256': sha(sync_bytes), 'editSha256': sha(edit), 'query': query, 'candidate': args.label,
             'qualifiedRoute': args.qualified_route, 'profile': 'synthetic-xlsx',
             'checks': ['all saved M', 'load wiring', 'adjacent workbook parts'],
-            'excelSaveMetadataPolicy': 'local-copy-path-and-revision-guid-v1', 'refresh': False}
+            'excelSaveMetadataPolicy': 'local-copy-path-and-revision-id-v2', 'refresh': False}
     plan_digest = sha(json_bytes(plan))
     if args.command == 'pq-plan':
         print(json_bytes({**plan, 'planSha256': plan_digest}).decode('utf-8'), end='')
@@ -900,6 +918,33 @@ def power_query_import(root, store, args):
     print('Verified saved M, load wiring and adjacent parts. Desktop save and reopen were operator-attested.')
 
 
+def create_pilot_workspace(parent: Path) -> tuple[Path, Path, Path]:
+    work = parent / f'pq-pilot-{uuid4().hex}'
+    # Set a protected, inheritable DACL at creation; do not alter the temp parent's ACL.
+    result = subprocess.run(
+        ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''
+            $ErrorActionPreference = 'Stop'
+            $path = $env:EXCEL_PILOT_ATTEMPT_PATH
+            if ([IO.Directory]::Exists($path) -or [IO.File]::Exists($path)) { exit 1 }
+            $operator = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            $security = [Security.AccessControl.DirectorySecurity]::new()
+            $security.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$operator)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)",
+                                                    [Security.AccessControl.AccessControlSections]::Access)
+            [System.IO.DirectoryInfo]::new($path).Create($security)
+        '''], env={**os.environ, 'EXCEL_PILOT_ATTEMPT_PATH': str(work)}, capture_output=True,
+    )
+    if result.returncode or not work.is_dir():
+        raise Blocked('Could not create a private pilot attempt directory with an explicit Windows ACL.')
+    require_private(work)
+    root = work / 'fixture'
+    store = work / 'private'
+    root.mkdir()
+    store.mkdir()
+    store = storage_path(root, store)
+    require_private(work, root, store)
+    return work, root, store
+
+
 def native_pq_pilot(desktop: bool) -> None:
     if not desktop:
         raise Blocked('The native pilot requires explicit --desktop.')
@@ -908,13 +953,7 @@ def native_pq_pilot(desktop: bool) -> None:
 
     parent = Path(tempfile.gettempdir()).resolve() / 'kilo'
     parent.mkdir(exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix='pq-pilot-', dir=parent))
-    root = work / 'fixture'
-    store = work / 'private'
-    root.mkdir()
-    store.mkdir()
-    store = storage_path(root, store)
-    require_private(work, root, store)
+    work, root, store = create_pilot_workspace(parent)
     print(f'Private pilot directory: {work}', flush=True)
 
     base, sync = root / 'base.xlsx', store / 'sync.json'

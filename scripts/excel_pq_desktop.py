@@ -18,7 +18,7 @@ NEIGHBOR = 'PilotNeighbor'
 LABEL = 'formula-only'
 BASE_M = '#table(type table [N = number], {{1}})'
 EDITED_M = '#table(type table [N = number], {{2}})'
-NEIGHBOR_M = '9'
+NEIGHBOR_M = '#table(type table [N = number], {{9}})'
 
 
 def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
@@ -115,22 +115,25 @@ def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
                 sheet.Name = 'Odbior'
                 book.Queries.Add(LOADED, BASE_M)
                 book.Queries.Add(NEIGHBOR, NEIGHBOR_M)
-                connection = (f'OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;'
-                              f'Location={LOADED};Extended Properties=""')
-                table = sheet.ListObjects.Add(SourceType=0, Source=connection, Destination=sheet.Range('B5'))
-                table.Name = 'PilotTable'
-                query_table = table.QueryTable
-                query_table.CommandType = 2  # xlCmdSql
-                query_table.CommandText = f'SELECT * FROM [{LOADED}]'
-                query_table.RefreshOnFileOpen = False
-                query_table.RefreshPeriod = 0
-                oledb = query_table.WorkbookConnection.OLEDBConnection
-                oledb.RefreshOnFileOpen = False
-                oledb.RefreshPeriod = 0
-                # Populate this local, literal-only fixture once. No other phase evaluates M.
-                step('populate fixture from literal M')
-                if not query_table.Refresh(False) or sheet.Range('B6').Value2 != 1:
-                    raise RuntimeError('Could not initialize synthetic B6 to 1.')
+                # Load both literal queries once so Excel initializes their save metadata symmetrically.
+                for query, name, column, value in ((LOADED, 'PilotTable', 'B', 1),
+                                                   (NEIGHBOR, 'PilotNeighborTable', 'E', 9)):
+                    connection = (f'OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;'
+                                  f'Location={query};Extended Properties=""')
+                    table = sheet.ListObjects.Add(SourceType=0, Source=connection,
+                                                  Destination=sheet.Range(f'{column}5'))
+                    table.Name = name
+                    query_table = table.QueryTable
+                    query_table.CommandType = 2  # xlCmdSql
+                    query_table.CommandText = f'SELECT * FROM [{query}]'
+                    query_table.RefreshOnFileOpen = False
+                    query_table.RefreshPeriod = 0
+                    oledb = query_table.WorkbookConnection.OLEDBConnection
+                    oledb.RefreshOnFileOpen = False
+                    oledb.RefreshPeriod = 0
+                    step(f'populate fixture from literal M: {query}')
+                    if not query_table.Refresh(False) or sheet.Range(f'{column}6').Value2 != value:
+                        raise RuntimeError(f'Could not initialize synthetic {column}6 to {value}.')
                 step('save synthetic fixture')
                 book.SaveAs(str(path), 51, AddToMru=False)  # xlOpenXMLWorkbook (.xlsx)
                 observed['fixtureOnlyRefresh'] = True
