@@ -1,0 +1,3 @@
+interface:
+  display_name: "Kilo Handoff"
+  short_description: "Transfer write ownership in the same Kilo checkout"
