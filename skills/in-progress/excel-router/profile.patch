@@ -1,0 +1,402 @@
+diff --git a/.config/kilo/rules/00-global.md b/.config/kilo/rules/00-global.md
+--- a/.config/kilo/rules/00-global.md
++++ b/.config/kilo/rules/00-global.md
+@@ -5,9 +5,11 @@ Developer / data engineer: Python, Power Query (M), DAX, Power BI, Microsoft Fab
+ Excel, Google Sheets, HTML/CSS/JS, integracje API, ETL, projektowanie GUI/UX.
+
+ ## Zanim użyjesz narzędzia — sprawdź skill
+-Gdy zadanie dotyczy konkretnego narzędzia lub serwera MCP (Excel, Power Query, Power BI,
++Zadania Windows Excel (także eksport, VBA, Power Query i Data Model w Excelu) zaczynaj od `skill(name: "excel-router")`, przed wyborem recepty. Jeśli skill jest niedostępny, zgłoś ograniczenie; nie wybieraj samodzielnie backendu.
++
++Poza tym, gdy zadanie dotyczy konkretnego narzędzia lub serwera MCP (Power Query, Power BI,
+ Fabric, Sheets, DuckDB, API), NAJPIERW sprawdź, czy istnieje skill o pasującej nazwie
+-(np. `excel-mcp`, `powerquery-m`, `powerbi-modeling`, `fabric`, `google-sheets`,
++(np. `powerquery-m`, `powerbi-modeling`, `fabric`, `google-sheets`,
+ `duckdb`, `api-integration`). Jeśli istnieje — wczytaj go i trzymaj się jego przepisów.
+ Nie eksperymentuj od zera, jeśli przepis już istnieje.
+
+diff --git a/.config/kilo/rules/10-windows-excel.md b/.config/kilo/rules/10-windows-excel.md
+--- a/.config/kilo/rules/10-windows-excel.md
++++ b/.config/kilo/rules/10-windows-excel.md
+@@ -9,17 +9,6 @@
+ - Nie polluj w pętli; czytaj board raz na milestone.
+ - `board_post` tylko przy zmianie stanu (done/blocked), nie po każdej komendzie.
+
+-## Excel COM
+-- Zawsze `DispatchEx` (własna instancja), `Visible=False`, `DisplayAlerts=False`.
+-- Po `Workbooks.Open` czekaj na `Application.Ready`; przy `com_error -2147352567`:
+-  zamknij instancję, odczekaj 2 s, otwórz ponownie — max 3 próby, potem zgłoś.
+-- `NumberFormat` ustawiaj po `Unmerge` i tylko na zakresie bez ochrony.
+-- Nigdy nie aktywuj okien (`SetForegroundWindow`) — nie jest to potrzebne do edycji.
+-
+-## VBA
+-- Przed kompilacją: `Application.VBE.ActiveVBProject` musi istnieć; w przeciwnym razie retry 3× z 2 s.
+-- Po `CompileProject` sprawdź wynik; przy błędzie wypisz numer linii, nie powtarzaj kompilacji w pętli.
+-
+ ## Python w shellu
+ - Zakaz `python -c` z cudzysłowami w środku. Pisz tymczasowy `.py` i uruchamiaj `python plik.py`.
+ - Alternatywa: `@' ... '@ | python -` (here-string).
+@@ -33,14 +22,8 @@
+ - Zawsze `python -X utf8` + `sys.stdout.reconfigure(encoding='utf-8')`.
+ - Nigdy nie polegaj na domyślnym cp1250 w Windows PowerShell 5.1.
+
+-## Pliki zajęte
+-- Przed otwarciem sprawdź `Test-Path "~$<nazwa>.xlsx"`; jeśli istnieje — plik jest otwarty
+-  w Excelu użytkownika: NIE otwieraj, poproś o zamknięcie.
+-
+-## Kolejność narzędzi
+-- Odczyt/inspekcja: najpierw MCP excel (`excel_*`), potem `passive_excel_audit`, COM tylko gdy
+-  musisz wykonać makro/formułę/formatowanie.
+-- Zapis przez COM tylko na kopii roboczej; po zapisie odczytaj komórkę i potwierdź wartość.
++## Excel
++- Wejście, blokady i kontrola zapisu: `excel-router` zgodnie z `00-global.md`.
+
+ ## Retry i temp
+ - Globalny budżet: 3 próby na operację, potem STOP + raport (nie pętla).
+diff --git a/.agents/skills/excel-mcp/SKILL.md b/.agents/skills/excel-mcp/SKILL.md
+--- a/.agents/skills/excel-mcp/SKILL.md
++++ b/.agents/skills/excel-mcp/SKILL.md
+@@ -1,17 +1,12 @@
+ ---
+ name: excel-mcp
+-description: >
+-  Excel MCP Server skill for Windows workbook automation. Use when an assistant
+-  needs rich MCP tools to create, inspect, modify, format, or analyze Excel files.
+-  Supports Power Query (M), Data Model/DAX, PivotTables, Tables, Ranges, Charts,
+-  Slicers, formatting, screenshots, VBA macros, connections, and calculation mode.
+-  Triggers: Excel, spreadsheet, workbook, xlsx, xlsm, Power Query, DAX, PivotTable,
+-  chart, dashboard, VBA, MCP.
+-compatibility: Requires Windows, Microsoft Excel 2016 or later, Node.js 18+, and network access for npx.
++description: "Use only when excel-router selects the verified Sbroenne MCP interface. Explains its session and action conventions."
+ ---
+
+ # Excel MCP Server Skill
+
++This recipe is for `sbroenne/mcp-server-excel`, not Negokaz or an arbitrary `excel` server. Follow the router's runtime controls before opening or creating. Verify the installed version and live schemas; if isolation or required open/save controls are unavailable, stop. Do not substitute CLI, COM or another server. Do not assume VBA operations support XLAM.
++
+ Provides 326 Excel operations through the official MCP SDK and
+ an in-process ExcelMCP Service. Tool schemas describe the available actions and
+ parameters; these notes cover behavior that schemas alone cannot explain.
+@@ -20,12 +15,11 @@ parameters; these notes cover behavior that schemas alone cannot explain.
+
+ - Requires Windows and desktop Microsoft Excel 2016 or later.
+ - Use `file(action: 'list')` to discover existing sessions before opening a file.
+-  Match the user's intended workbook; do not automatically choose any open session.
++  Match the intended workbook and verify ownership; do not attach to an unowned session.
+ - Use a supplied full Windows path, not a guessed username or folder. Ask when
+   the intended file or a destructive change remains unclear.
+ - A workbook must not be open in another Excel instance.
+-- Excel is hidden by default. Use `show: true` or `window(action: 'show')` when
+-  requested. Do not impose a visibility menu on every task.
++- Request a hidden session by default; verify actual visibility behavior for the installed version. Use `show: true` or `window(action: 'show')` only within the router's visibility exception.
+
+ ## Session and saving behavior
+
+@@ -38,14 +32,14 @@ Only supply arguments applicable to the selected action. Unknown names,
+ inapplicable arguments (including nulls/defaults), and incorrect types are errors.
+ Send numbers and booleans as JSON values, not strings. Range values are 2D arrays.
+
+-Close only when authorized, work is finished, and `file(list)` reports `canClose: true`.
+-Leave the workbook open when requested:
++Before edits read AutoSave and warnings; decide whether continuing fits the authorized save scope. Close only when authorized, work is finished, and `file(list)` reports `canClose: true`.
++Leave the workbook open when requested only if leaving it open and its possible side effects are in scope. To save and close, when both are authorized:
+
+ ```
+ file(action: 'close', session_id: '<returned-id>', save: true)
+ ```
+
+-Close defaults to `save: false`, which discards unsaved edits. Normal server
++Close defaults to `save: false`, which discards unsaved edits, not earlier AutoSave. Verify an authorized save with independent readback. Normal server
+ shutdown attempts to save remaining sessions; do not rely on it as a substitute
+ for an explicit save. Crashes, timeouts, and forced cleanup can lose edits.
+ Confirm before closing a visible window unless already authorized.
+@@ -89,15 +83,15 @@ and restore the mode returned by the first call.
+
+ Worksheet tables and Data Model tables are separate. Add a worksheet table to
+ the Data Model before creating DAX measures. Refresh the Data Model after
+-changing the source table.
++changing the source table only when refresh is independently in scope.
+
+ Prefer `powerquery(action: 'evaluate', session_id: id, m_code: '...')` for new or
+ materially changed M code. Create loads data to its selected destination
+ (`worksheet` by default); choose `connection-only` to store without loading.
+ Use `load-to` to change destinations and `refresh` to update already-loaded data.
+-Update refreshes by default unless `refresh: false` is supplied.
++Update refreshes by default. Pass `refresh: false` unless refresh is independently in scope; stop if the selected action cannot suppress out-of-scope refresh.
+
+-Use `file(test)` when workbook access or IRM/AIP protection is uncertain. Ordinary
++Use `file(test)` only if its runtime effects are authorized and qualified, not to probe passive access. Ordinary
+ validation opens briefly in Excel read-only; protected files may need visible
+ authentication. Testing does not bypass authentication.
+
+@@ -106,6 +100,7 @@ authentication. Testing does not bypass authentication.
+ Start with the [complete task-guide index](./references/index.md) to find the
+ relevant topic. Examples use `sessionId` as a local variable containing the
+ returned session ID; pass it as `session_id`, not as an invented literal.
++Reference examples describe capabilities, not authorization: use only owned sessions and qualified runtime probes, and do not bring windows to the foreground to capture evidence.
+
+ Shared guides are skill references, not MCP prompts or automatically loaded
+ server instructions. This server advertises tools, not prompts or resources.
+diff --git a/.agents/skills/excel-cli/SKILL.md b/.agents/skills/excel-cli/SKILL.md
+--- a/.agents/skills/excel-cli/SKILL.md
++++ b/.agents/skills/excel-cli/SKILL.md
+@@ -1,16 +1,11 @@
+ ---
+ name: excel-cli
+-description: >
+-  Quick start for changing or checking an Excel workbook with the excelcli
+-  command. Use before your first excelcli call. Gives the usual open, change,
+-  check and save routine and the exact batch names for common actions, so you
+-  can skip most --help and list-actions lookups.
++description: "Use only when excel-router selects the verified Sbroenne excelcli interface. Covers batch commands, session IDs and result checks."
+ ---
+
+ # excelcli quick start
+
+-If `excelcli` is not on PATH, run this plugin's `bin\start-cli.ps1` by its full
+-path with the same arguments.
++Follow the router's runtime controls first. Verify executable identity/version and supported arguments; if the selected interface or required controls are unavailable, stop. Do not launch an installer or use a different interface. CLI session IDs are not MCP session IDs.
+
+ ## The routine: about three calls
+
+@@ -21,9 +16,9 @@ path with the same arguments.
+    its `autoSaveOn` and `warning`: Excel may save edits automatically.
+ 2. **Change and check** in one batch with `--session <sessionId>
+    --stop-on-error`. Put the writes first, then reads of the cells you changed,
+-   so one result shows that the change worked.
+-3. **Save and close**: `session close --session <sessionId> --save`, only after
+-   step 2's reads look right. Closing without `--save` discards only unsaved
++   so one result shows the in-session change. Mutate only within authorized effects.
++3. **Save and close**: `session close --session <sessionId> --save`, only with
++   save authorization and after step 2's reads look right. Account for save-on-shutdown behavior. Closing without `--save` discards only unsaved
+    edits; it cannot undo changes already saved by AutoSave.
+
+ Pass the batch as a JSON array in a file with `--input <file>`. Direct
+@@ -44,8 +39,7 @@ others.
+ ```
+
+ Keep reads small: ask for the rows and columns you need, not a whole large
+-sheet. Don't close and reopen the workbook to check your work; read it back in
+-the same session.
++sheet. In-session verification is intermediate; independently reopen the saved copy without saving for persistence readback. After a timeout, account for the owned session before proceeding and do not replay an uncertain mutation.
+
+ ## Exact names for common actions
+
+diff --git a/.agents/skills/excel-com-safe/SKILL.md b/.agents/skills/excel-com-safe/SKILL.md
+--- a/.agents/skills/excel-com-safe/SKILL.md
++++ b/.agents/skills/excel-com-safe/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: excel-com-safe
+-description: "Use when automating Excel on Windows through pywin32/COM (xlsx, xlsm, VBA, refresh). Covers instance lifecycle, error codes, locking, formatting traps and retry budgets."
++description: "Use only when excel-router explicitly selects direct Windows Excel COM via pywin32. Covers owned instance lifecycle and scoped error handling."
+ metadata:
+   category: office
+   platform: windows
+@@ -9,13 +9,13 @@ metadata:
+ # Excel COM — bezpieczna automatyzacja
+
+ ## Kiedy
+-Każde `win32com.client`, `Dispatch`, `DispatchEx`, `Workbooks.Open`, makra, refresh, formatowanie.
++Tylko dla wybranej ścieżki direct COM, po sprawdzeniu wersji `pywin32`, hosta i zakresu. Zastosuj wspólne kontrole runtime z `excel-router` przed otwarciem. Nie używaj COM zamiast niedostępnej recepty.
+
+ ## Reguły startu
+ 1. `DispatchEx("Excel.Application")` — własna instancja, nigdy `Dispatch` (bierze Twoją otwartą).
+-2. `Visible = False`, `DisplayAlerts = False`, `ScreenUpdating = False`.
++2. `Visible = False` domyślnie. Zmieniaj `DisplayAlerts` i `ScreenUpdating` tylko w potrzebnej fazie i przywracaj wartości zastane. `DisplayAlerts=False` nie zastępuje kontroli skutków otwarcia.
+ 3. Po `Workbooks.Open` poczekaj na `Application.Ready`; przy dużych plikach `time.sleep(1)` w pętli max 20 s.
+-4. Na końcu: `wb.Close(SaveChanges=...)`, `app.Quit()`, `del app` — w `finally`, zawsze.
++4. W `finally` rozlicz tylko własny skoroszyt i instancję. Zamknij z jawną decyzją `SaveChanges`, uwzględniając AutoSave i zapis przy `Quit`; przy nieznanym stanie mutacji nie ponawiaj jej ani nie zabijaj procesu użytkownika.
+
+ ## Zanim otworzysz plik
+ - `Test-Path "~$<nazwa>.xlsx"` → jeśli istnieje, plik jest otwarty u użytkownika. **Nie otwieraj** — poproś o zamknięcie.
+@@ -29,12 +29,12 @@ Gdy wybrano bezpośredni COM do kwalifikacji jednej zwykłej formuły na syntety
+ | Kod | Znaczenie | Reakcja |
+ |---|---|---|
+ | `-2147352567` | generic COM ("Wystąpił wyjątek") | przy błędzie otwarcia zamknij własną instancję, 2 s, nowa instancja, max 3 próby; nie ponawiaj zapisu o nieznanym wyniku |
+-| `-2146827284` (NumberFormat) | scalony/chroniony zakres | `Unmerge` → ustaw format → `Merge` z powrotem |
++| `-2146827284` (NumberFormat) | scalony/chroniony zakres | sprawdź zakres i ochronę; nie rozscalaj ani nie obchodź ochrony |
+ | `Open method of Workbooks class failed` | plik zajęty / uprawnienia / path | sprawdź `~$`, uprawnienia, ścieżkę skróconą `\\?\` |
+ | `SetForegroundWindow` | brak fokusu | nie aktywuj okien w ogóle — nie jest to potrzebne |
+
+ ## Formatowanie
+-- Najpierw `ws.Range(...).Unmerge()`, potem `NumberFormat`, potem scalanie.
++- Zachowaj scalenia. Jeśli docelowe formatowanie wymaga zmiany struktury, zatrzymaj się poza uzgodnionym zakresem.
+ - `NumberFormat` ustawiaj na `Range`, nie na `Cells` całego arkusza (wolne i wywala się na ochronie).
+
+ ## Budżet
+@@ -42,5 +42,5 @@ Gdy wybrano bezpośredni COM do kwalifikacji jednej zwykłej formuły na syntety
+
+ ## Czego nie robić
+ - Nie otwieraj pliku, który jest w `~$`.
+-- Nie zapisuj `.xlsx` jako `.xlsm` (makra giną).
++- Zachowaj format źródłowy (`.xlsx`, `.xlsm`, `.xlam`); nie konwertuj w ramach naprawy błędu. Po zapisie sprawdź wynik w niezależnym ponownym otwarciu bez zapisu.
+ - Nie zmieniaj plików źródłowych klienta — pracuj na kopii.
+diff --git a/.agents/skills/passive-excel-audit/SKILL.md b/.agents/skills/passive-excel-audit/SKILL.md
+--- a/.agents/skills/passive-excel-audit/SKILL.md
++++ b/.agents/skills/passive-excel-audit/SKILL.md
+@@ -1,32 +1,12 @@
+ ---
+ name: passive-excel-audit
+-description: "Use to inspect an xlsx/xlsm without opening Excel (no COM, no locks): sheets, ranges, formulas, defined names, PQ queries. First choice before any workbook work."
++description: "Use only when excel-router selects passive inspection of a saved workbook package."
+ metadata:
+   category: office
+-  repo: versuni-search-ecosystem
+ ---
+
+ # Passive Excel audit
+
+-## Kiedy
+-Zanim tkniesz skoroszyt: "co jest w środku", "jakie są arkusze", "gdzie jest formuła", "czy jest PQ".
++Use a verified read-only package inspector, or select Python `zipfile` and bounded XML reads for an ordinary OOXML package (`.xlsx`, `.xlsm`, `.xlam`). Inspect `xl/workbook.xml`, its relationships, requested sheets and shared strings; inspect defined names, tables, VBA, connections, PQ or model part presence only as needed. Do not extract to disk or dump unrequested cell values, query text or credentials. Bound member size and rows; avoid loading whole large sheets.
+
+-## Komenda
+-```
+-python -B -X utf8 tools/analysis/passive_excel_audit.py inspect --root "<katalog>"
+-```
+-(32 wywołania w bazie — to sprawdzona ścieżka; działa bez COM, nie blokuje pliku użytkownika.)
+-
+-## Co daje
+-- listę arkuszy i wymiarów, zakresy z formułami,
+-- nazwy zdefiniowane, tabele, połączenia,
+-- zapytania Power Query (nazwy + liczba kroków),
+-- brak side-effectów: plik nie jest otwierany w Excelu.
+-
+-## Zasady
+-1. Najpierw audyt pasywny, potem dopiero COM (jeśli trzeba pisać).
+-2. Wynik zapisz w `Working/evidence/<slug>/audit.json` — wklejaj do promptu zamiast ponownie skanować.
+-3. Nie otwieraj `.xlsx` przez `openpyxl` z `data_only=False` na 100k+ komórek — to minute, nie sekundy; audyt ma własne limity.
+-
+-## Fallback
+-Brak narzędzia w repo → `zipfile` + `xl/workbook.xml` (arkusze) i `sharedStrings.xml`, bez zależności.
++Report the saved state only: formula text and cached values may differ, caches may be stale or absent, and part presence does not prove working queries or a live model. If format, encryption, permissions or the inspector prevent the required read, stop and explain what is unavailable. Do not launch Excel, install, save, or change the selected backend.
+diff --git a/.agents/skills/vba-compile-cycle/SKILL.md b/.agents/skills/vba-compile-cycle/SKILL.md
+--- a/.agents/skills/vba-compile-cycle/SKILL.md
++++ b/.agents/skills/vba-compile-cycle/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: vba-compile-cycle
+-description: "Use when editing or testing VBA modules (.bas/.cls/.frm) in Excel: inject, compile, run, read result, rollback. Prevents 'VBE compile did not complete' loops."
++description: "Use only when excel-router needs the VBA import, compilation or behavior-test reference for its selected route."
+ metadata:
+   category: office
+   platform: windows
+@@ -8,19 +8,17 @@ metadata:
+
+ # VBA: cykl kompilacji i testu
+
+-## Kolejność (zawsze ta sama)
+-1. **Backup** modułu przed importem (`export` do `%TEMP%\kilo\vba\`).
+-2. Import: `VBProject.VBComponents.Import(path)` — nie wklejaj tekstu przez `CodeModule`.
+-3. **Gotowość VBE**: `Application.VBE.ActiveVBProject` musi istnieć; jeśli `AttributeError`/`None` → 3× `sleep(2)`.
+-4. `Application.VBE.ActiveVBProject.VBComponents` — sprawdź, czy moduł jest na liście.
+-5. Kompilacja: `Application.VBE.CommandBars.FindControl(ID:=578).Execute` (CompileProject) albo `Application.Run`.
+-6. **Wynik**: błąd kompilacji = `Application.VBE.ActiveVBProject.IsDirty` + ostatnia linia z Immediate. Nie powtarzaj kompilacji w pętli — wypisz numer linii i napraw kod.
+-7. Test: `Application.Run("NazwaMakra", args)` w `try/except`, wynik wypisz.
+-8. Rollback: jeśli test nie przechodzi — usuń zaimportowany moduł i wgraj backup.
++Zastosuj kontrole runtime `excel-router`. Odczyt aktualnego eksportu nie wymaga VBA runtime. Poniższy cykl dotyczy tylko autoryzowanego importu lub testu na izolowanej kopii.
++
++1. Przed importem zachowaj kopię skoroszytu oraz eksport modułu (dla formularza komplet FRM/FRX). Sprawdź typ modułu, zależności, ochronę i wsparcie dla danego formatu, w tym XLAM; nie zmieniaj referencji ani Trust Center.
++2. Sprawdź gotowość VBE oraz tożsamość `VBProject` docelowego skoroszytu; nie zakładaj, że aktywny projekt jest właściwy. Przy niegotowości maksymalnie trzy odczyty co 2 s, potem stop. Użyj wspieranej operacji importu dla typu modułu i sprawdź nazwę/typ oraz eksport po zmianie.
++3. Raportuj kompilację oddzielnie. Użyj `CompileProject` tylko gdy masz wiarygodny sposób identyfikacji celu i obserwacji wyniku; inaczej `NOT_RUN` lub `NOT_VERIFIED`. `Application.Run`, `IsDirty` i brak błędu nie są pełnym oracle. Nie zapętlaj kompilacji; zapisz komunikat i linię, jeśli są znane.
++4. Uruchamiaj jawnie zatwierdzone makro/refresh i sprawdź konkretny stan lub wartość. Nie włączaj automatycznie zdarzeń, makr startowych lub nieznanych zależności dla osiągnięcia wyniku.
++5. Przy niepowodzeniu odrzuć izolowaną kopię lub odtwórz checkpoint zgodnie z zakresem i rozlicz skutki uboczne. Sam import backupu modułu nie cofa zapisu ani skutków makra.
+
+ ## Typowe pułapki
+-- `RuntimeError: VBE compile did not complete` (13×) = brak gotowości VBE albo modalny dialog. Zamknij dialogi (`DisplayAlerts=False`), spróbuj ponownie raz, potem raportuj.
+-- Brak referencji (np. `Scripting.Runtime`) → `VBProject.References.AddFromGuid`, nie "naprawiaj" kodu.
++- `RuntimeError: VBE compile did not complete`: sprawdź gotowość i możliwość dialogu, ale nie automatyzuj arbitralnych dialogów. Raportuj ograniczenie.
++- Brak referencji (np. `Scripting.Runtime`): raportuj zależność zamiast automatycznie ją dodawać.
+ - `Option Explicit` + zmienna niezadeklarowana = błąd kompilacji, nie runtime.
+ - Nie kompiluj, gdy arkusz jest w trybie edycji komórki (`Application.Interactive`).
+
+diff --git a/.agents/skills/xlsx/SKILL.md b/.agents/skills/xlsx/SKILL.md
+--- a/.agents/skills/xlsx/SKILL.md
++++ b/.agents/skills/xlsx/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: xlsx
+-description: "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .xltx, .csv, or .tsv file (e.g., adding columns, computing formulas, formatting, charting, cleaning messy data); create a new spreadsheet from scratch or from other data sources; or convert between tabular file formats. Trigger especially when the user references a spreadsheet file by name or path — even casually (like \"the xlsx in my downloads\") — and wants something done to it or produced from it. Also trigger for cleaning or restructuring messy tabular data files (malformed rows, misplaced headers, junk data) into proper spreadsheets. The deliverable must be a spreadsheet file. Do NOT trigger when the primary deliverable is a Word document, HTML report, standalone Python script, database pipeline, or Google Sheets API integration, even if tabular data is involved."
++description: "Use for standalone CSV/TSV conversion, or when excel-router selects a file library for a verified simple XLSX document."
+ license: Complete terms in LICENSE.txt
+ ---
+
+@@ -10,24 +10,23 @@ license: Complete terms in LICENSE.txt
+ |---|---|
+ | **Create** or **edit** with formulas/formatting | `openpyxl` — see gotchas below |
+ | **Bulk data** in or out | `pandas` (`read_excel`, `to_excel`) |
+-| **Quick look** at a sheet | `markitdown file.xlsx` — `## SheetName` per sheet; reads `.xlsm` too. No cell coordinates, so don't plan edits from it |
+-| **Read** a model (formulas *and* values) | two `load_workbook` passes — see gotchas |
++| **Check** formulas and cached values in a simple output | two read-only `load_workbook` passes — see gotchas |
+
+-> `openpyxl`, `pandas`, and `markitdown` are preinstalled — do not run `pip install` first; write the script and import directly. Only if an import fails (or the `markitdown` command is missing): `pip install` the missing package.
++Verify the selected library and version before using it; if missing, stop without installing. Do not write applications (including XLSM/XLAM, or XLSX with PQ, model, controls or unknown preservation requirements) using this recipe. `keep_vba` is not a preservation guarantee.
+
+ > Script paths below are relative to this skill's directory.
+
+ ## Requirements for every output
+
+ - **Professional font** (Arial, Times New Roman) throughout, unless the user says otherwise.
+-- **Zero formula errors.** Never ship while `recalc.py` reports `errors_found`; the one exception is under `not_computed` below. If you think an error predates you, prove it: load the *original* with `data_only=True` and look at that cell. An error you introduced looks exactly like one you inherited.
++- **Verify intended formulas.** If a compatible engine reports errors, resolve introduced errors within scope; compare against the original when claiming a pre-existing error. Distinguish verified results from missing/stale caches or unsupported functions.
+ - **Use formulas, never hardcoded results.** Write `sheet['B10'] = '=SUM(B2:B9)'`, not the Python-computed total. The sheet must recalculate when its inputs change.
+ - **Follow the user's spec literally.** Exact tab names, exact column headers, and the formula they spelled out. A redesign that computes something else fails, however elegant.
+ - **Document every assumption and hardcoded number** where the reader will see it — a cell comment, or an adjacent cell at a table's end. Cite a real source when one exists (`Source: Company 10-K, FY2024, Page 45, Revenue Note, [SEC EDGAR URL]`); when the number came from the user, say so plainly.
+ - **A workbook *you create* for someone to fill in** needs a short legend naming which cells to edit, and one example row of realistic values showing the expected format. Never add such a row to a file you were asked to edit.
+ - **Editing an existing file: match its conventions exactly.** They override every guideline here. Find its designated input cells first — a distinct font color, fill, or shading marks them — write only there, and leave every existing formula untouched.
+
+-## Recalculate (mandatory whenever the file contains formulas)
++## Formula verification
+
+ openpyxl writes formulas as strings with **no cached values**. Until you recalculate, every
+ formula cell reads back as `None` to anything reading cached values — `pandas`,
+@@ -37,7 +36,7 @@ formula cell reads back as `None` to anything reading cached values — `pandas`
+ python scripts/recalc.py output.xlsx [timeout_seconds]   # default 30
+ ```
+
+-LibreOffice computes the formulas **on a copy**, only their values go into your file, and you get JSON:
++Use this optional LibreOffice check only for a simple workbook on a separately authorized disposable copy and when the engine can handle the formulas. It writes cached results back to the path supplied; never run it on the original or approved output. Its JSON reports:
+ `status` (`success` | `errors_found`), `total_formulas`, `total_errors`, and an
+ `error_summary` naming up to 100 cells per error type (`locations_truncated` says how many it
+ withheld — trust `total_errors`, not the length of the list). Fix what it names and run it
+@@ -55,27 +54,24 @@ keep what they held: after an openpyxl save, nothing until Excel opens it. For t
+ read the original with `data_only=True`; keep the formulas. A sound formula depending on a listed one,
+ directly or not, reports `#NAME?` too: leave it and tell the user. A cell that tests one
+ (`IFERROR(B1,0)`) gets LibreOffice's fallback, and a kept value may be stale: say so. After editing
+-sheet XML, delete each changed formula's `<v>`: a mistake that keeps its value is listed, not reported.
++formula text, do not present a previous cache as the computed result.
+
+-## Choosing formulas that survive verification
++## Choosing an engine
+
+ LibreOffice implements fewer functions than Excel, and a formula it cannot evaluate has no value
+ until Excel opens the file.
+
+-- **Prefer Excel-2007-era functions** — `SUMIFS`, `INDEX`, `MATCH`, `IFERROR`, `SUMPRODUCT` — which need no prefix.
+-- **Six post-2007 functions work, but only with an `_xlfn.` prefix**, because openpyxl writes your formula into the XML verbatim and Excel stores post-2007 names prefixed (its UI hides the prefix): `_xlfn.TEXTJOIN`, `_xlfn.CONCAT`, `_xlfn.IFS`, `_xlfn.SWITCH`, `_xlfn.MAXIFS`, `_xlfn.MINIFS`. Written bare, each yields `#NAME?`.
+-- **Never use `XLOOKUP`, `XMATCH`, `SORT`, `FILTER`, `UNIQUE`, or `SEQUENCE`.** The runtime's LibreOffice cannot evaluate them, and one that can fills only the top-left cell of their result, since an openpyxl-written file has no spill metadata. Use `INDEX`/`MATCH` for lookups, and sort, filter, and de-duplicate in Python before writing the cells.
++- Preserve modern functions and spill behavior. Check the format and writer's required formula representation; if the selected writer or validator cannot support it, report the limitation rather than replacing functions or values. This is not permission to launch Excel.
+ - A missing `)` is reported as `unbalanced brackets`. Too few arguments (`=ROUND(A1)`) is not: LibreOffice returns a value, and Excel may offer to repair the file.
+
+ ## openpyxl gotchas
+
+ - **Reading a model takes two loads.** `data_only=True` yields cached values with the formulas gone; the default yields formula strings with no values. One pass cannot give you both.
+ - **`data_only=True` is destructive if you save.** That workbook has no formulas left, so saving replaces every one with a literal — permanently.
+-- **`data_only=True` on a file openpyxl just wrote returns `None` everywhere** — run `recalc.py` first. (A formula whose result is `""` also reads back as `None`.)
++- **`data_only=True` on a file openpyxl just wrote can return `None` for formulas** because no cache was written. That is not proof of error or successful calculation.
+ - **Merged cells: write the top-left anchor only.** Every other cell in the range is a `MergedCell` whose `.value` is read-only.
+-- **`.xlsm` loses its macros unless you pass `keep_vba=True`** to `load_workbook`.
+-- **A sheet name containing a space must be quoted** in a cross-sheet reference: `='Assumptions Inputs'!$B$5`. Unquoted, it evaluates to `#VALUE!`.
+-- **Saving an upload drops its text boxes, shapes and slicers.** First search `xl/drawings/` for `<xdr:sp ` (with the space) and look for an `xl/slicers/` part; if found, tell the user or edit the sheet XML directly.
++- **A sheet name containing a space must be quoted** in a cross-sheet reference: `='Assumptions Inputs'!$B$5`.
++- **Saving may drop text boxes, shapes and slicers.** Check drawings and slicer parts before choosing a writer; stop if preservation cannot be established. Do not patch XML as a fallback.
+ - **Nothing mends a malformed workbook**: an unclosed quote in a number format (`'0.00 "USD'`), a defined name starting with `=`, or duplicate or empty table headers are saved as written, and Excel may offer to repair the file.
+ - **Partly bold or italic cell text is flattened** unless `load_workbook(rich_text=True)`; such a `.value` is then a `CellRichText`, not a `str`.
+ - **Every new formula needs its own `number_format`** (date, %, currency): nothing infers it, so a date shows as `45337` and 30% as `0.3`.
+@@ -101,4 +97,4 @@ lone edited cell mid-row is the commonest silent error · guard denominators tha
+
+ ## Dependencies
+
+-`openpyxl`, `pandas`, `markitdown` (pip, preinstalled — install only if an import fails or the command is missing) · LibreOffice (`soffice`, auto-configured for sandboxed environments via `scripts/office/soffice.py`)
++Use only available, selected dependencies (`openpyxl` or `pandas`; optional LibreOffice validation as scoped above). Report missing capabilities; do not install automatically.

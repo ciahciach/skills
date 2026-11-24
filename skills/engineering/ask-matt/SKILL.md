@@ -110,6 +110,8 @@ Off the main flow entirely.
 
 **`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
 
+**`excel-router`** (Kilo VS Code on Windows, optional beta): for workbook work rather than repo setup, load this skill first when available. It selects a scoped recipe or reports a blocker; it is not shipped in the plugin.
+
 <!-- next-step-pointer -->
 > **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
 > and picks one), or state it yourself in one line with the exact command.
