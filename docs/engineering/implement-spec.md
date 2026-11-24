@@ -53,6 +53,8 @@ The questions below about the integration branch and whole-spec review describe 
 - **Authorized to change PR status:** The coordinator returns the PR to draft.
 - **Not authorized:** The coordinator asks the human to hold the merge.
 
+The coordinator arranges fresh checks and review of the current changes, even if the worker already finished. It reuses the same assignment and PR, reserving a slot again only if implementation must resume. If a verified handoff changes an active worker session, the coordinator tracks the successor without creating a second worktree or freeing the active slot.
+
 **How is this different from running `/implement` on each issue myself?**
 
 With `implement` you are the dispatcher: one [session](https://www.aihero.dev/ai-coding-dictionary/session) per issue, clearing in between and keeping track of what is unblocked. `implement-spec` hands dispatch to one coordinator. In Kilo VS Code you explicitly commission the issue list and worktree starts, and still own every merge. On other hosts you start with a spec pointer and review the integration branch at the end. For a small change with no real graph, use `implement` directly.
