@@ -78,7 +78,7 @@ import hashlib
 from io import BytesIO, TextIOWrapper
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import posixpath
 import re
 import stat
@@ -86,6 +86,7 @@ import subprocess
 import sys
 import tempfile
 from xml.etree import ElementTree as ET
+from xml.parsers import expat
 from zipfile import BadZipFile, ZipFile
 
 from excel_power_query import MODEL, M_SOURCE, QueryBlocked, check_expression, connection_query, read_mashup
@@ -120,6 +121,7 @@ class Blocked(Exception):
 @dataclass
 class QuerySnapshot:
     part: str
+    workbook_part: str
     queries: dict[str, str]
     metadata: tuple[str, dict[str, bytes], bytes, bytes]
     wiring: dict
@@ -439,7 +441,7 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False):
             wiring = {'kind': 'inventory-only', 'hasDataModel': has_model,
                       'connections': sorted(connections, key=lambda row: int(row['id'])),
                       'worksheetLoads': sorted(loads, key=lambda row: (row['sheet'], row['table']))}
-            query_snapshot = QuerySnapshot(mashup_part, queries, preservation, wiring, risky_open)
+            query_snapshot = QuerySnapshot(mashup_part, part, queries, preservation, wiring, risky_open)
 
     inventory = {'kind': 'inventory-only', 'sheets': sheets,
                  'definedNames': len(workbook.findall(f'{S}definedNames/{S}definedName')),
@@ -675,6 +677,86 @@ def preserved_parts(data, mashup_part, *, allow_cell_values=False):
     return checked
 
 
+def excel_copy_metadata_changes(base, result, folder):
+    part = 'xl/workbook.xml'
+    with ZipFile(BytesIO(base)) as before, ZipFile(BytesIO(result)) as after:
+        old, new = before.read(part), after.read(part)
+    if old == new:
+        return []
+
+    workbook = S[1:-1] + ' workbook'
+    mc = 'http://schemas.openxmlformats.org/markup-compatibility/2006 '
+    targets = {
+        (workbook, mc + 'AlternateContent', mc + 'Choice',
+         'http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac absPath'): ('absPath.url', 'url'),
+        (workbook, 'http://schemas.microsoft.com/office/spreadsheetml/2014/revision revisionPtr'):
+            ('revisionPtr.documentId', 'documentId'),
+    }
+    attribute = rb'''[ \t\r\n]+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')'''
+    start_tag = re.compile(rb'<[^\s/>]+((?:' + attribute + rb')*)\s*/?>')
+
+    def spans(raw):
+        found: dict[str, list[tuple[str, int, int]]] = {}
+        if b'<!' in raw or b'\0' in raw:
+            return found
+        parser = expat.ParserCreate(namespace_separator=' ')
+        stack: list[str] = []
+
+        def start(name, attrs):
+            stack.append(name)
+            target = targets.get(tuple(stack))
+            if target is None:
+                return
+            field, key = target
+            offset = parser.CurrentByteIndex
+            tag = start_tag.match(raw, offset)
+            if tag is None:
+                return
+            for match in re.finditer(attribute, tag[1]):
+                if match[1] == key.encode('ascii'):
+                    left, right = match.span(2 if match[2] is not None else 3)
+                    found.setdefault(field, []).append((attrs[key], tag.start(1) + left, tag.start(1) + right))
+
+        parser.StartElementHandler = start
+        parser.EndElementHandler = lambda _: stack.pop()
+        parser.Parse(raw, True)
+        return found
+
+    try:
+        left, right = spans(old), spans(new)
+    except expat.ExpatError:
+        return None
+    changes = []
+    edits: tuple[list[tuple[int, int]], list[tuple[int, int]]] = ([], [])
+    for field, _ in targets.values():
+        if len(left.get(field, [])) != 1 or len(right.get(field, [])) != 1:
+            continue
+        (a, a_start, a_end), = left[field]
+        (b, b_start, b_end), = right[field]
+        if a == b:
+            continue
+        if field == 'absPath.url':
+            # The original may have been copied since Excel last saved it.
+            local = r'[A-Za-z]:\\(?:[^<>:"/\\|?*\x00-\x1f]+\\)*'
+            if (not re.fullmatch(local, a) or not re.fullmatch(local, b)
+                    or '..' in PureWindowsPath(a).parts or b != str(folder).rstrip('\\') + '\\'):
+                continue
+        elif not all(re.fullmatch(r'13_ncr:1_\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}', value)
+                     for value in (a, b)):
+            continue
+        changes.append(field)
+        edits[0].append((a_start, a_end))
+        edits[1].append((b_start, b_end))
+
+    def masked(raw, ranges):
+        for start, end in sorted(ranges, reverse=True):
+            raw = raw[:start] + raw[end:]
+        return raw
+
+    # Compare original XML bytes except for the two validated attribute values.
+    return changes if masked(old, edits[0]) == masked(new, edits[1]) else None
+
+
 def checked_query_snapshot(data):
     _, _, snapshot = workbook_artifacts(data, '.xlsx', power_query=True)
     if snapshot is None:
@@ -751,7 +833,8 @@ def power_query_import(root, store, args):
     plan = {'kind': 'power-query-import-plan', 'workbook': metadata['workbook'], 'baseSha256': base_digest,
             'syncSha256': sha(sync_bytes), 'editSha256': sha(edit), 'query': query, 'candidate': args.label,
             'qualifiedRoute': args.qualified_route, 'profile': 'synthetic-xlsx',
-            'checks': ['all saved M', 'load wiring', 'adjacent workbook parts'], 'refresh': False}
+            'checks': ['all saved M', 'load wiring', 'adjacent workbook parts'],
+            'excelSaveMetadataPolicy': 'local-copy-path-and-revision-guid-v1', 'refresh': False}
     plan_digest = sha(json_bytes(plan))
     if args.command == 'pq-plan':
         print(json_bytes({**plan, 'planSha256': plan_digest}).decode('utf-8'), end='')
@@ -782,13 +865,21 @@ def power_query_import(root, store, args):
         raise Blocked('Saved M differs from the approved edit or an adjacent query changed.')
     if observed.wiring != snapshot.wiring:
         raise Blocked('Power Query load wiring changed.')
-    if (observed.part != snapshot.part or observed.metadata != snapshot.metadata
-            or preserved_parts(data, snapshot.part) != preserved_parts(result, observed.part)):
+    before = preserved_parts(data, snapshot.part)
+    after = preserved_parts(result, observed.part)
+    workbook_changed = False
+    if snapshot.workbook_part == observed.workbook_part == 'xl/workbook.xml':
+        workbook_changed = before.pop('xl/workbook.xml') != after.pop('xl/workbook.xml')
+    if observed.part != snapshot.part or observed.metadata != snapshot.metadata or before != after:
+        raise Blocked('Could not verify preservation of adjacent workbook parts.')
+    save_metadata = excel_copy_metadata_changes(data, result, candidate.parent) if workbook_changed else []
+    if save_metadata is None:
         raise Blocked('Could not verify preservation of adjacent workbook parts.')
     artifacts = build_export(result, metadata['workbook'], power_query=True)
     # This evidence is intentionally not a publishable onboarding export or a sync update.
     artifacts['manifest.json'] = json_bytes({'kind': 'power-query-saved-package-verification', 'planSha256': plan_digest,
                                             'candidateSha256': digest,
+                                            'excelSaveMetadataChanges': save_metadata,
                                             'operatorAttestations': {'qualifiedRoute': args.qualified_route,
                                                                      'save': args.save_evidence,
                                                                      'reopen': args.reopen_evidence},

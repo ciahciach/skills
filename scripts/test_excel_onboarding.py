@@ -25,7 +25,7 @@ def make_writable(path: Path):
         path.chmod(stat.S_IWRITE | stat.S_IRUSR)
 
 
-def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=False):
+def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=False, copy_metadata=''):
     content_type = ('application/vnd.ms-excel.sheet.macroEnabled.main+xml' if macros
                     else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml')
     vba_type = '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' if macros else ''
@@ -45,7 +45,8 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, queries=F
           <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
         </Types>''')
         book.writestr('_rels/.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-        book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}"><sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}">{copy_metadata}'
+                      '<sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
         book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/>{vba_link}{connections}</Relationships>')
         rows = '' if expression is None else f'''
           <row r="1"><c r="A1"><f>{escape(expression)}</f><v>92345</v></c><c r="B1" t="inlineStr"><is><t>PRIVATE_FIXTURE_DATA</t></is></c></row>
@@ -267,8 +268,8 @@ class OnboardingTest(unittest.TestCase):
         self.assertEqual(self.book.read_bytes(), before)
 
     def save_query_fixture(self, path, value, *, cell_formula='2+2', connection_id='1', unsafe=False,
-                           refresh_on_load=False, command_query='Loaded Query'):
-        save_fixture(path, cell_formula, queries=True)
+                           refresh_on_load=False, command_query='Loaded Query', copy_metadata=''):
+        save_fixture(path, cell_formula, queries=True, copy_metadata=copy_metadata)
         package = BytesIO()
         with ZipFile(package, 'w') as mashup:
             expression = '"PRIVATE_INLINE_SECRET"' if unsafe else f'#table(type table [N = number], {{{{{value}}}}})'
@@ -323,7 +324,20 @@ class OnboardingTest(unittest.TestCase):
         self.assertFalse((self.repo / 'formulas/power-query.json').exists())
 
     def test_power_query_import_verifies_a_separate_copy_without_advancing_sync(self):
-        self.save_query_fixture(self.book, 1)
+        candidate = self.store / 'candidates/attempt/workbook.xlsx'
+
+        def metadata(folder, digit, *, revision=0):
+            path = ''
+            if sys.platform == 'win32':
+                path = ('<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+                        '<mc:Choice Requires="x15"><x15ac:absPath '
+                        'xmlns:x15ac="http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac" '
+                        f'url="{escape(str(folder))}\\"/></mc:Choice></mc:AlternateContent>')
+            guid = f'{digit * 8}-{digit * 4}-{digit * 4}-{digit * 4}-{digit * 12}'
+            return path + ('<xr:revisionPtr xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" '
+                           f'revIDLastSave="{revision}" documentId="13_ncr:1_{{{guid}}}"/>')
+
+        self.save_query_fixture(self.book, 1, copy_metadata=metadata(self.repo, '1'))
         self.export('baseline', '--power-query')
         self.publish('baseline')
         self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
@@ -335,7 +349,6 @@ class OnboardingTest(unittest.TestCase):
         plan = json.loads(self.cli('pq-plan', *args))
         self.assertEqual(plan['query'], 'Loaded Query')
         self.assertEqual(plan['baseSha256'], hashlib.sha256(base).hexdigest())
-        candidate = self.store / 'candidates/attempt/workbook.xlsx'
         self.assertFalse(candidate.parent.exists())
         error = self.cli('pq-prepare', *args, '--approved-plan', '0' * 64, ok=False)
         self.assertIn('approved plan', error)
@@ -348,10 +361,14 @@ class OnboardingTest(unittest.TestCase):
         self.assertEqual(candidate.read_bytes(), base)
 
         # Simulate the route's saved result. This does not qualify a desktop runtime.
-        for change, expected in [({'connection_id': '2'}, 'load wiring'),
-                                 ({'cell_formula': '2+3'}, 'adjacent workbook parts'),
-                                 ({}, '')]:
-            self.save_query_fixture(candidate, 2, **change)
+        cases = [(metadata(candidate.parent, '2'), {'connection_id': '2'}, 'load wiring'),
+                 (metadata(candidate.parent, '2'), {'cell_formula': '2+3'}, 'adjacent workbook parts'),
+                 (metadata(candidate.parent, '2', revision=1), {}, 'adjacent workbook parts')]
+        if sys.platform == 'win32':
+            cases.append((metadata(candidate.parent.parent, '2'), {}, 'adjacent workbook parts'))
+        cases.append((metadata(candidate.parent, '2'), {}, ''))
+        for workbook_metadata, change, expected in cases:
+            self.save_query_fixture(candidate, 2, copy_metadata=workbook_metadata, **change)
             reopened = hashlib.sha256(candidate.read_bytes()).hexdigest()
             message = self.cli('pq-verify', *args, *approval, *evidence, '--reopened-sha256', reopened, ok=not expected)
             if expected:
@@ -362,6 +379,10 @@ class OnboardingTest(unittest.TestCase):
         self.assertEqual((self.store / 'review/attempt/power-query-inventory.json').read_bytes(),
                          (self.repo / 'baseline/power-query-inventory.json').read_bytes())
         manifest = json.loads((self.store / 'review/attempt/manifest.json').read_bytes())
+        expected_metadata = ['revisionPtr.documentId']
+        if sys.platform == 'win32':
+            expected_metadata.insert(0, 'absPath.url')
+        self.assertEqual(manifest['excelSaveMetadataChanges'], expected_metadata)
         self.assertEqual(manifest['operatorAttestations']['reopen'], 'simulated-reopen')
         self.assertEqual(self.book.read_bytes(), base)
         self.assertEqual((self.store / 'sync.json').read_bytes(), sync)
