@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -19,6 +20,10 @@ import win32process
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from win32com.client import DispatchEx
+
+
+SHEET_NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+REVISION_NS = '{http://schemas.microsoft.com/office/spreadsheetml/2014/revision}'
 
 
 def require(condition, message):
@@ -103,13 +108,39 @@ def normalized_package(path, *, edited=False):
     if edited:
         name = 'xl/worksheets/sheet1.xml'
         sheet = ET.fromstring(parts[name])
-        ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
-        for cell in sheet.iter(ns + 'c'):
+        for cell in sheet.iter(SHEET_NS + 'c'):
             if cell.get('r') == 'B1':
                 for node in cell:
-                    if node.tag in {ns + 'f', ns + 'v'}:
+                    if node.tag in {SHEET_NS + 'f', SHEET_NS + 'v'}:
                         node.text = None
         parts[name] = ET.tostring(sheet)
+
+        # This fixture has two independent formulas on the same sheet. SpreadsheetML
+        # records last-calculated order here, not formula dependencies.
+        name = 'xl/calcChain.xml'
+        if name in parts:
+            chain = ET.fromstring(parts[name])
+            if (chain.tag == SHEET_NS + 'calcChain' and len(chain) == 2 and
+                    all(cell.tag == SHEET_NS + 'c' and not len(cell) for cell in chain) and
+                    {cell.get('r') for cell in chain} == {'B1', 'C1'} and
+                    chain[0].get('i') == '1' and chain[1].get('i', '1') == '1' and
+                    chain[0].attrib.keys() <= {'i', 'r', 'l'} and
+                    chain[0].get('l', '1') == '1' and chain[1].attrib.keys() <= {'i', 'r'}):
+                # Excel marks the first entry of the sole calculation level with l="1".
+                # Keep the marker at that position; do not mask any attributes other than r.
+                normalized, count = re.subn(rb'(<c\b[^<>]*?\sr=")[BC]1(")', rb'\1#\2', parts[name])
+                if count == 2 and [cell.get('r') for cell in ET.fromstring(normalized)] == ['#', '#']:
+                    parts[name] = normalized
+
+        # Compare every other byte of workbook.xml, including namespace declarations.
+        # The revision document ID may rotate only on this disposable local edit.
+        name = 'xl/workbook.xml'
+        pointers = ET.fromstring(parts[name]).findall(REVISION_NS + 'revisionPtr')
+        if len(pointers) == 1 and pointers[0].get('documentId'):
+            normalized, count = re.subn(rb'(<xr:revisionPtr\s[^<>]*?\sdocumentId=")[^"]+("[^<>]*/>)',
+                                        rb'\1#\2', parts[name])
+            if count == 1 and ET.fromstring(normalized).find(REVISION_NS + 'revisionPtr').get('documentId') == '#':
+                parts[name] = normalized
     return parts
 
 
@@ -138,7 +169,14 @@ def xml_changes(base, copy, names):
         for name in ('xl/calcChain.xml', 'xl/workbook.xml'):
             if name in names and name in before.namelist() and name in after.namelist():
                 left, right = (ET.fromstring(package.read(name)) for package in (before, after))
-                yield {'part': name, 'changes': list(compare(left, right, left.tag.rsplit('}', 1)[-1]))}
+                details = {'part': name, 'changes': list(compare(left, right, left.tag.rsplit('}', 1)[-1]))}
+                if name == 'xl/calcChain.xml':
+                    orders = [[cell.get('r') for cell in chain] for chain in (left, right)]
+                    if all(len(order) == 2 and set(order) == {'B1', 'C1'} for order in orders):
+                        details['order_before'], details['order_after'] = orders
+                        details['attributes_before'], details['attributes_after'] = (
+                            [dict(cell.attrib) for cell in chain] for chain in (left, right))
+                yield details
 
 
 @contextmanager
@@ -216,6 +254,7 @@ def phase(stage, path, *, prepared=True, read_only=False, edit=False, expected_f
             require(app.Ready and bool(book.ReadOnly) == read_only, 'Unexpected workbook readiness/access')
             require(not book.LinkSources(1) and book.Connections.Count == 0 and book.Queries.Count == 0,
                     'Workbook unexpectedly contains links, connections, or queries')
+            require(not book.MultiUserEditing, 'Shared workbook is outside the synthetic profile')
             autosave = book.AutoSaveOn
             require(autosave is False, 'AutoSave is enabled or unknown')
             cell = book.Worksheets('Calc').Range('B1')
@@ -312,7 +351,8 @@ def run(root):
         report('package_preservation', status='NOT_VERIFIED', changed_parts=changed,
                xml_changes=list(xml_changes(base, candidate, changed)))
         raise RuntimeError(f'Candidate changed unrelated parts: {changed}')
-    report('package_preservation', status='PASS')
+    report('package_preservation', status='PASS', xml_changes=list(xml_changes(base, candidate,
+           changed_parts(base, candidate))))
 
 
 if __name__ == '__main__':
