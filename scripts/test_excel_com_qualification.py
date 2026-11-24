@@ -1,13 +1,8 @@
 import runpy
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from zipfile import ZipFile
-
-
-if sys.platform != 'win32':
-    raise unittest.SkipTest('Direct COM qualification requires Windows')
 
 
 compare = runpy.run_path(str(Path(__file__).with_name('qualify-excel-com.py')))['changed_parts']
@@ -15,7 +10,8 @@ compare = runpy.run_path(str(Path(__file__).with_name('qualify-excel-com.py')))[
 
 class PackagePreservationTests(unittest.TestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()) / 'kilo')
+        parent = Path(tempfile.gettempdir()) / 'kilo'
+        directory = tempfile.TemporaryDirectory(dir=parent if parent.is_dir() else None)
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.base = self.package('base')

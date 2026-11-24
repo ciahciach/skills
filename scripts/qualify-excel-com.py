@@ -13,15 +13,6 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
-import pywintypes
-import win32api
-import win32event
-import win32process
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font
-from win32com.client import DispatchEx
-
-
 SHEET_NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 REVISION_NS = '{http://schemas.microsoft.com/office/spreadsheetml/2014/revision}'
 
@@ -79,6 +70,8 @@ def profile(path, *, prepared=False):
 
 
 def export(path):
+    from openpyxl import load_workbook
+
     result = {}
     for data_only, key in ((False, 'formula_or_value'), (True, 'cached_or_value')):
         book = load_workbook(path, read_only=False, data_only=data_only)
@@ -181,6 +174,11 @@ def xml_changes(base, copy, names):
 
 @contextmanager
 def excel(stage):
+    import win32api
+    import win32event
+    import win32process
+    from win32com.client import DispatchEx
+
     existing = set(win32process.EnumProcesses())
     app = DispatchEx('Excel.Application')
     _, pid = win32process.GetWindowThreadProcessId(app.Hwnd)
@@ -215,6 +213,8 @@ def excel(stage):
 
 
 def open_guarded(app, path, read_only, stage, *, expect_open_error=False):
+    import pywintypes
+
     previous = app.AutomationSecurity
     opened = None
     forced = None
@@ -281,6 +281,9 @@ def phase(stage, path, *, prepared=True, read_only=False, edit=False, expected_f
 
 
 def run(root):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
     seed = root / 'seed.xlsx'
     book = Workbook()
     sheet = book.active
