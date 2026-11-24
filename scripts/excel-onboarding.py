@@ -1,10 +1,45 @@
-"""Export one saved XLSX and explicitly accept its first synchronization point.
+"""Prepare or export one workbook and explicitly accept its first synchronization point.
 
 From an existing Git worktree, use a dedicated private local directory outside
 Git, one per workbook, on a filesystem supporting read-only files. On Windows
 its ACL may grant access only to the operator, SYSTEM and Administrators. On
 POSIX use a directory owned by the operator with mode 0700. Give the script's
-full path if it lives outside your worktree. No setup skill or Excel needed.
+full path if it lives outside your worktree. The CLI never launches Excel.
+
+For a new XLSX, use the shared Excel entry point to select a Windows desktop
+route for creating and saving a blank XLSX. Confirm explicit authorization and
+qualification for the backend implementation/version, operation and profile.
+If either is missing, stop with the reason; do not fall back to another backend.
+Save to a new, Git-ignored .xlsx path and independently reopen/read back the
+saved file through the qualified route. Then export with --desktop-verified:
+
+  python -X utf8 <script> export book.xlsx baseline --desktop-verified <workbook-sha256> --store <private-dir>
+
+For a new XLSM, obtain the approved template manifest SHA-256 independently
+of the files in the store. Under templates/<manifest-sha256>/ place read-only
+template.json, template.xlsm and all required external FRM/FRX companions.
+The manifest has this shape (use actual SHA-256 values and immutable version):
+  {"version":"v1","workbookSha256":"<sha256>","companions":{"Form.frm":"<sha256>","Form.frx":"<sha256>"}}
+List all required sidecars; use {} when none are required. The binary workbook
+and its embedded artifacts are copied byte-for-byte, not opened or converted.
+External companions remain in the private pinned version as one unit.
+
+  python -X utf8 <script> copy-template book.xlsm --template-sha256 <manifest-sha256> --store <private-dir>
+  python -X utf8 <script> export book.xlsm baseline --template-sha256 <manifest-sha256> --desktop-verified <workbook-sha256> --store <private-dir>
+
+Before opening the copied XLSM, qualify and authorize the desktop readback for
+the actual template profile, including control of opening effects such as XLM
+and refresh-on-open. Reopen only the copy, read-only, without updating links,
+running macros or refreshing. Close without saving and then export. If any
+qualification, authorization or readback check is missing, stop before review
+and acceptance. Do not substitute a save-as or infer qualification from a
+successful passive copy. Record desktop create/save and reopen evidence
+separately from this CLI's checksum and format checks. By passing
+--desktop-verified, the operator attests that authorization, qualification and
+readback were verified for those exact saved bytes. The CLI checks the digest,
+not the truth of the attestation. Existing XLSX onboarding does not use it.
+
+Review and accept either starting path using the existing onboarding commands:
 
   python -X utf8 <script> export book.xlsx baseline --store <private-dir>
   python -X utf8 <script> publish baseline baseline --reviewed <manifest-sha256> --store <private-dir>
@@ -17,7 +52,7 @@ full path if it lives outside your worktree. No setup skill or Excel needed.
 Before publishing, review all three text artifacts under <private-dir>/review
 for sensitive identifiers, numeric constants and logic. Pass the digest printed
 by export. Publication verifies the exact preview against the retained version.
-Stage only reviewed text files, never the XLSX or a redacted preview. Acceptance
+Stage only reviewed text files, never workbook binaries or a redacted preview. Acceptance
 checks the published export again; later exports do not advance sync.
 
 Only exact A1 targets of standalone ordinary formulas are editable here. The
@@ -31,13 +66,13 @@ and formulas for sensitive information. No redacted export or import is provided
 
 Versions are named by SHA-256 and never replaced by this tool. Local read-only
 files do not protect against storage administrators; use appropriate retention
-and backups. This command does not qualify an Excel runtime or write to a workbook.
+and backups. This command does not qualify an Excel runtime or edit workbook internals.
 """
 
 import argparse
 from collections import Counter
 import hashlib
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 import json
 import os
 from pathlib import Path
@@ -58,6 +93,12 @@ MAX_PACKAGE = 64 * 1024 * 1024
 MAX_XML = 16 * 1024 * 1024
 CELL = re.compile(r'([A-Z]{1,3})([1-9][0-9]{0,6})\Z')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
+PROFILES = {'.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+            '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.main+xml'}
+COMPANION = re.compile(r'(?!con\.|prn\.|aux\.|nul\.|(?:com|lpt)[0-9]\.)[a-z0-9_-]+\.(?:frm|frx)\Z',
+                       re.IGNORECASE | re.ASCII)
+FRX_REFERENCE = re.compile(rb'"([^"\r\n]+\.frx)"\s*:[0-9a-f]+', re.IGNORECASE)
+VBA_PROJECT = 'http://schemas.microsoft.com/office/2006/relationships/vbaProject'
 TEXT_LITERAL = re.compile(r'"(?:[^"]|"")*"')
 CREDENTIAL = re.compile(
     r'(?i)\b(?:gh[pousr]_[a-z0-9_]{20,}|github_pat_[a-z0-9_]{20,}|sk_(?:test|live)_[a-z0-9_]{12,}'
@@ -107,7 +148,8 @@ def require_private(*paths):
     if any(path.resolve() != path for path in paths):
         raise Blocked('The private store must not contain path aliases.')
     if os.name == 'posix':
-        if any(path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o077 for path in existing):
+        uid = os.geteuid()  # type: ignore[attr-defined]  # POSIX only
+        if any(path.stat().st_uid != uid or path.stat().st_mode & 0o077 for path in existing):
             raise Blocked(code)
     elif os.name == 'nt':
         result = subprocess.run(
@@ -149,8 +191,8 @@ def read_bounded(path, limit):
     return data
 
 
-def write_once(path, data):
-    # Publish a complete read-only file without overwriting any existing version.
+def write_once(path, data, *, writable=False):
+    # Publish a complete file without overwriting an existing destination.
     fd, name = tempfile.mkstemp(dir=path.parent)
     pending = Path(name)
     try:
@@ -158,7 +200,8 @@ def write_once(path, data):
             file.write(data)
             file.flush()
             os.fsync(file.fileno())
-        pending.chmod(stat.S_IRUSR)
+        if not writable:
+            pending.chmod(stat.S_IRUSR)
         if os.name == 'nt':
             pending.rename(path)  # Windows rename fails if the destination exists.
         else:
@@ -192,7 +235,7 @@ def rectangle(reference):
     return left, top, right, bottom
 
 
-def workbook_artifacts(data):
+def workbook_artifacts(data, profile, *, format_only=False):
     cells, sheets = [], []
     remaining = MAX_PACKAGE
     with ZipFile(BytesIO(data)) as book:
@@ -223,7 +266,7 @@ def workbook_artifacts(data):
             return result
 
         def target(part, relation, kind):
-            if relation.get('Type') != f'{OFFICE}/{kind}' or relation.get('TargetMode', 'Internal') != 'Internal':
+            if relation.get('Type') != kind or relation.get('TargetMode', 'Internal') != 'Internal':
                 raise Blocked('Unsupported workbook part relationship.')
             ref = relation['Target']
             if any(c in ref for c in '\\:%?#'):
@@ -233,16 +276,22 @@ def workbook_artifacts(data):
         workbook_parts = [row for row in relationships('').values() if row.get('Type') == f'{OFFICE}/officeDocument']
         if len(workbook_parts) != 1:
             raise Blocked('Expected one workbook document.')
-        part = target('', workbook_parts[0], 'officeDocument')
+        part = target('', workbook_parts[0], f'{OFFICE}/officeDocument')
         content_types = xml('[Content_Types].xml')
-        expected = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'
-        if not any(item.get('PartName') == '/' + part and item.get('ContentType') == expected for item in content_types):
-            raise Blocked('Only saved XLSX packages are supported.')
+        types = [item.get('ContentType') for item in content_types if item.get('PartName') == '/' + part]
+        if types != [PROFILES[profile]]:
+            raise Blocked(f'Saved workbook format does not match {profile.upper()}; conversion is not supported.')
         workbook = xml(part)
         sheet_nodes = workbook.find(f'{S}sheets')
         if workbook.tag != f'{S}workbook' or sheet_nodes is None or not len(sheet_nodes):
             raise Blocked('Unsupported workbook structure.')
         links = relationships(part)
+        vba_projects = [row for row in links.values() if row.get('Type') == VBA_PROJECT]
+        if vba_projects and (profile != '.xlsm' or len(vba_projects) != 1
+                             or target(part, vba_projects[0], VBA_PROJECT) not in names):
+            raise Blocked('Saved workbook has a missing or unsupported VBA project part.')
+        if format_only:
+            return [], {}
         sheet_names, sheet_parts = set(), set()
         for sheet in sheet_nodes.findall(f'{S}sheet'):
             name = sheet.attrib['name']
@@ -253,7 +302,7 @@ def workbook_artifacts(data):
             if relation.get('Type') != f'{OFFICE}/worksheet':
                 sheets.append({'sheet': name, 'type': 'non-worksheet'})
                 continue
-            sheet_part = target(part, relation, 'worksheet')
+            sheet_part = target(part, relation, f'{OFFICE}/worksheet')
             if sheet_part in sheet_parts:
                 raise Blocked('Duplicate worksheet part.')
             sheet_parts.add(sheet_part)
@@ -267,7 +316,7 @@ def workbook_artifacts(data):
                 table_links = relationships(sheet_part)
             for table in table_parts:
                 relation = table_links[table.attrib[f'{{{OFFICE}}}id']]
-                definition = xml(target(sheet_part, relation, 'table'))
+                definition = xml(target(sheet_part, relation, f'{OFFICE}/table'))
                 left, top, right, bottom = rectangle(definition.attrib['ref'])
                 columns = definition.findall(f'{S}tableColumns/{S}tableColumn')
                 if definition.tag != f'{S}table' or len(columns) != right - left + 1:
@@ -279,7 +328,7 @@ def workbook_artifacts(data):
                         excluded_ranges.append((col, top, col, bottom))
 
             formulas = {}
-            excluded_kinds = Counter()
+            excluded_kinds: Counter[str] = Counter()
             for cell in worksheet.findall(f'{S}sheetData/{S}row/{S}c'):
                 formula = cell.find(f'{S}f')
                 if formula is None:
@@ -319,8 +368,8 @@ def workbook_artifacts(data):
     return cells, inventory
 
 
-def build_export(data, workbook):
-    cells, inventory = workbook_artifacts(data)
+def build_export(data, workbook, template=None, desktop_verified=None):
+    cells, inventory = workbook_artifacts(data, Path(workbook).suffix.lower())
     for value in [workbook, *(sheet['sheet'] for sheet in inventory['sheets'])]:
         if CREDENTIAL.search(value):
             raise Blocked('Publication blocked: possible credential in workbook metadata.')
@@ -332,8 +381,13 @@ def build_export(data, workbook):
             raise Blocked('Publication blocked: an external formula is outside the supported export profile.')
     artifacts = {'ordinary-formulas.json': json_bytes({'kind': 'editable-ordinary-formulas', 'cells': cells}),
                  'inventory.json': json_bytes(inventory)}
-    artifacts['manifest.json'] = json_bytes({'schema': 1, 'workbook': workbook, 'versionSha256': sha(data),
-                                             'files': {name: sha(content) for name, content in artifacts.items()}})
+    metadata = {'schema': 1, 'workbook': workbook, 'versionSha256': sha(data),
+                'files': {name: sha(content) for name, content in artifacts.items()}}
+    if template is not None:
+        metadata['templateManifestSha256'] = template
+    if desktop_verified is not None:
+        metadata['desktopVerifiedSha256'] = desktop_verified
+    artifacts['manifest.json'] = json_bytes(metadata)
     return artifacts
 
 
@@ -361,19 +415,105 @@ def retained_bytes(path, version):
     return data
 
 
-def export(root, store, workbook, label):
+def verified_template(store, pin):
+    if not SHA.fullmatch(pin):
+        raise Blocked('Use the approved template manifest SHA-256.')
+    folder = store / 'templates' / pin
+    manifest = folder / 'template.json'
+    workbook = folder / 'template.xlsm'
+    require_private(store, folder.parent, folder, manifest, workbook)
+    if not manifest.is_file() or not workbook.is_file():
+        raise Blocked('Pinned template manifest or workbook is missing.')
+    raw = read_bounded(manifest, MAX_XML)
+    if sha(raw) != pin or manifest.stat().st_mode & stat.S_IWRITE:
+        raise Blocked('Pinned template manifest checksum or read-only status does not match.')
+    metadata = json.loads(raw)
+    if (not isinstance(metadata, dict) or set(metadata) != {'version', 'workbookSha256', 'companions'}
+            or not isinstance(metadata['version'], str) or not metadata['version'].strip()
+            or not isinstance(metadata['workbookSha256'], str) or not SHA.fullmatch(metadata['workbookSha256'])):
+        raise Blocked('Pinned template manifest must identify an immutable version and workbook checksum.')
+    companions = metadata['companions']
+    if (not isinstance(companions, dict) or len(companions) > 100
+            or any(not COMPANION.fullmatch(name)
+                   or not isinstance(digest, str) or not SHA.fullmatch(digest) for name, digest in companions.items())):
+        raise Blocked('Pinned template manifest has an invalid FRM/FRX companion inventory.')
+    names = {name.lower() for name in companions}
+    if len(names) != len(companions) or {path.name for path in folder.iterdir()} != {
+            manifest.name, workbook.name, *companions}:
+        raise Blocked('Pinned template has missing, duplicate, or unlisted required artifacts.')
+    require_private(*(folder / name for name in companions))
+    for name, digest in companions.items():
+        path = folder / name
+        if not path.is_file():
+            raise Blocked('Pinned template companion is missing or is not a file.')
+        data = read_bounded(path, MAX_PACKAGE)
+        if sha(data) != digest or path.stat().st_mode & stat.S_IWRITE:
+            raise Blocked('Pinned template companion checksum or read-only status does not match.')
+        lower = name.lower()
+        if lower.endswith('.frx') and lower[:-4] + '.frm' not in names:
+            raise Blocked('Pinned FRX requires its matching FRM.')
+        if lower.endswith('.frm'):
+            expected = lower[:-4] + '.frx'
+            for line in data.splitlines():
+                references = FRX_REFERENCE.findall(line)
+                if ((not references and line.lstrip().lower().startswith(b'oleobjectblob'))
+                        or any(name.lower() != expected.encode('ascii') or expected not in names for name in references)):
+                    raise Blocked('Pinned FRM has a missing or unsupported FRX reference.')
+    return retained_bytes(workbook, metadata['workbookSha256'])
+
+
+def workbook_profile(source, template):
+    profile = source.suffix.lower()
+    if profile not in PROFILES or source.name.startswith('~$'):
+        raise Blocked('Only .xlsx and pinned .xlsm profiles are supported; conversion is not supported.')
+    if profile == '.xlsm' and template is None:
+        raise Blocked('XLSM requires an approved template manifest SHA-256.')
+    if profile == '.xlsx' and template is not None:
+        raise Blocked('The pinned template route requires an .xlsm destination; conversion is not supported.')
+    return profile
+
+
+def workbook_path(root, workbook, template):
     source = repo_path(root, workbook)
-    preview = preview_path(store, label)
-    if source.suffix.lower() != '.xlsx' or source.name.startswith('~$'):
-        raise Blocked('Identify one saved XLSX workbook.')
+    workbook_profile(source, template)
     if source.with_name('~$' + source.name).exists():
         raise Blocked('Workbook lock file exists; close Excel before exporting.')
+    return source
+
+
+def copy_template(root, store, workbook, template):
+    destination = workbook_path(root, workbook, template)
+    if (store / 'sync.json').exists():
+        raise Blocked('The first synchronization point is already set.')
+    if destination.exists() or not destination.parent.is_dir():
+        raise Blocked('Choose a new workbook path under an existing parent.')
+    if git(root, 'check-ignore', '--quiet', '--', workbook).returncode != 0:
+        raise Blocked('The working workbook path must be ignored by Git.')
+    data = verified_template(store, template)
+    workbook_artifacts(data, '.xlsm', format_only=True)
+    write_once(destination, data, writable=True)
+    print(f'Copied pinned XLSM without conversion. Workbook SHA-256: {sha(data)}')
+
+
+def verify_desktop_attestation(template, attested, version):
+    if template is not None and attested is None:
+        raise Blocked('Pinned XLSM export requires qualified, authorized desktop readback of the copy.')
+    if attested is not None and attested != version:
+        raise Blocked('The desktop-verified checksum does not match the saved workbook.')
+
+
+def export(root, store, workbook, label, template=None, desktop_verified=None):
+    source = workbook_path(root, workbook, template)
+    preview = preview_path(store, label)
     if preview.exists():
         raise Blocked('Choose a new preview label.')
     data = read_bounded(source, MAX_PACKAGE)
-    artifacts = build_export(data, source.relative_to(root).as_posix())
     version = sha(data)
-    retained = store / 'versions' / f'{version}.xlsx'
+    verify_desktop_attestation(template, desktop_verified, version)
+    if template is not None and verified_template(store, template) != data:
+        raise Blocked('Saved XLSM differs from the pinned template; no initial export was produced.')
+    artifacts = build_export(data, source.relative_to(root).as_posix(), template, desktop_verified)
+    retained = store / 'versions' / f'{version}{source.suffix.lower()}'
     require_private(store, preview.parent, retained.parent, retained)
     retained.parent.mkdir(mode=0o700, exist_ok=True)
     if not retained.exists():
@@ -392,11 +532,17 @@ def verified_export(root, store, folder, reviewed):
     version = metadata['versionSha256']
     if not SHA.fullmatch(version):
         raise Blocked('Invalid workbook version checksum.')
+    template = metadata.get('templateManifestSha256')
+    desktop_verified = metadata.get('desktopVerifiedSha256')
+    verify_desktop_attestation(template, desktop_verified, version)
     workbook = repo_path(root, metadata['workbook'])
-    retained = store / 'versions' / f'{version}.xlsx'
+    profile = workbook_profile(workbook, template)
+    retained = store / 'versions' / f'{version}{profile}'
     require_private(store, retained.parent, retained)
     data = retained_bytes(retained, version)
-    artifacts = build_export(data, workbook.relative_to(root).as_posix())
+    if template is not None and verified_template(store, template) != data:
+        raise Blocked('Retained XLSM does not match the pinned template.')
+    artifacts = build_export(data, workbook.relative_to(root).as_posix(), template, desktop_verified)
     if ({file.name for file in folder.iterdir()} != artifacts.keys()
             or any(read_bounded(folder / name, MAX_PACKAGE) != content for name, content in artifacts.items())):
         raise Blocked('Export no longer matches the retained workbook and reviewed manifest.')
@@ -419,6 +565,13 @@ def main():
     export_cmd = commands.add_parser('export', help='Export one saved workbook for private review.')
     export_cmd.add_argument('workbook', help='Workbook path relative to the Git worktree root.')
     export_cmd.add_argument('label', help='New label for the private review directory.')
+    export_cmd.add_argument('--desktop-verified', metavar='WORKBOOK_SHA256',
+                            help='Attest qualified, authorized desktop readback for the exact saved workbook.')
+    copy_cmd = commands.add_parser('copy-template', help='Make a byte-exact working copy of a pinned XLSM.')
+    copy_cmd.add_argument('workbook', help='New, Git-ignored XLSM path relative to the worktree root.')
+    for command in (copy_cmd, export_cmd):
+        command.add_argument('--template-sha256', required=command is copy_cmd,
+                             help='Approved template manifest SHA-256 (required for XLSM).')
     publish_cmd = commands.add_parser('publish', help='Publish a reviewed private export into Git.')
     publish_cmd.add_argument('label', help='Reviewed private export label.')
     publish_cmd.add_argument('destination', help='New export directory relative to the Git worktree root.')
@@ -426,7 +579,7 @@ def main():
     accept_cmd.add_argument('candidate', help='Reviewed export directory relative to the Git worktree root.')
     for command in (publish_cmd, accept_cmd):
         command.add_argument('--reviewed', required=True, help='SHA-256 of the manifest you reviewed.')
-    for command in (export_cmd, publish_cmd, accept_cmd):
+    for command in (copy_cmd, export_cmd, publish_cmd, accept_cmd):
         command.add_argument('--store', required=True, help='Existing private, access-controlled directory outside Git.')
     args = parser.parse_args()
     try:
@@ -435,8 +588,10 @@ def main():
             raise Blocked('Run from a Git worktree.')
         root = Path(result.stdout.rstrip('\r\n')).resolve()
         store = storage_path(root, args.store)
-        if args.command == 'export':
-            export(root, store, args.workbook, args.label)
+        if args.command == 'copy-template':
+            copy_template(root, store, args.workbook, args.template_sha256)
+        elif args.command == 'export':
+            export(root, store, args.workbook, args.label, args.template_sha256, args.desktop_verified)
         elif args.command == 'publish':
             _, artifacts = verified_export(root, store, preview_path(store, args.label), args.reviewed)
             write_export(repo_path(root, args.destination), artifacts)
@@ -453,5 +608,6 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.stdout.reconfigure(encoding='utf-8')
+    if isinstance(sys.stdout, TextIOWrapper):
+        sys.stdout.reconfigure(encoding='utf-8')
     raise SystemExit(main())

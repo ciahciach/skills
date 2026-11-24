@@ -1,7 +1,9 @@
 import hashlib
+from io import TextIOWrapper
 import json
 from pathlib import Path
 import runpy
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,25 +18,39 @@ OFFICE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 
-def save_fixture(path, expression):
+def make_writable(path: Path):
+    if path.exists():
+        path.chmod(stat.S_IWRITE | stat.S_IRUSR)
+
+
+def save_fixture(path, expression, *, macros=False, missing_vba=False):
+    content_type = ('application/vnd.ms-excel.sheet.macroEnabled.main+xml' if macros
+                    else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml')
+    vba_type = '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' if macros else ''
+    vba_link = ('<Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" '
+                'Target="vbaProject.bin"/>') if macros else ''
     with ZipFile(path, 'w') as book:
-        book.writestr('[Content_Types].xml', '''<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        book.writestr('[Content_Types].xml', f'''<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
           <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
           <Default Extension="xml" ContentType="application/xml"/>
-          <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+          {vba_type}
+          <Override PartName="/xl/workbook.xml" ContentType="{content_type}"/>
           <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
         </Types>''')
         book.writestr('_rels/.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
         book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}"><sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
-        book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
-        book.writestr('xl/worksheets/sheet1.xml', f'''<worksheet xmlns="{SHEET}"><sheetData>
+        book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/>{vba_link}</Relationships>')
+        rows = '' if expression is None else f'''
           <row r="1"><c r="A1"><f>{escape(expression)}</f><v>92345</v></c><c r="B1" t="inlineStr"><is><t>PRIVATE_FIXTURE_DATA</t></is></c></row>
           <row r="3"><c r="A3"><f>2*2</f></c></row>
           <row r="4"><c r="A4" cm="1"><f t="array" ref="A4:A5">ROW(A4:A5)</f></c></row>
           <row r="5"><c r="A5"><f>3+2</f><v>5</v></c></row>
           <row r="7"><c r="A7"><f t="shared" ref="A7:A8" si="0">B7+1</f></c></row>
           <row r="8"><c r="A8"><f t="shared" si="0"/></c></row>
-        </sheetData></worksheet>''')
+        '''
+        book.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{SHEET}"><sheetData>{rows}</sheetData></worksheet>')
+        if macros and not missing_vba:
+            book.writestr('xl/vbaProject.bin', b'Synthetic opaque VBA bytes')
 
 
 class OnboardingTest(unittest.TestCase):
@@ -72,6 +88,120 @@ class OnboardingTest(unittest.TestCase):
 
     def preview_digest(self, label):
         return hashlib.sha256((self.store / 'review' / label / 'manifest.json').read_bytes()).hexdigest()
+
+    def pin_template(self, *, declare_frx=True, missing_vba=False):
+        source = self.store / 'fixture.xlsm'
+        save_fixture(source, '2+2', macros=True, missing_vba=missing_vba)
+        files = {'template.xlsm': source.read_bytes(), 'Form.frm': b'Picture = "Form.frx":0000\r\n'}
+        if declare_frx:
+            files['Form.frx'] = b'Synthetic form resource'
+
+        def digest(data):
+            return hashlib.sha256(data).hexdigest()
+
+        manifest = json.dumps({'version': 'v1', 'workbookSha256': digest(files['template.xlsm']),
+                               'companions': {name: digest(data) for name, data in files.items()
+                                              if name != 'template.xlsm'}}).encode('utf-8')
+        pin = digest(manifest)
+        folder = self.store / 'templates' / pin
+        folder.parent.mkdir(mode=0o700)
+        folder.mkdir(mode=0o700)
+        for name, data in {**files, 'template.json': manifest}.items():
+            path = folder / name
+            path.touch(mode=0o600)
+            path.write_bytes(data)
+            path.chmod(stat.S_IRUSR)
+            self.addCleanup(make_writable, path)
+        source.unlink()
+        (self.repo / '.gitignore').write_text('*.xlsm\n', encoding='utf-8')
+        return pin, folder, files
+
+    def test_pinned_xlsm_is_copied_then_accepted_as_first_sync(self):
+        pin, folder, files = self.pin_template()
+        copy = self.repo / 'model.xlsm'
+        self.cli('copy-template', copy.name, '--template-sha256', pin)
+        self.assertEqual(copy.read_bytes(), files['template.xlsm'])
+        self.assertTrue(copy.stat().st_mode & stat.S_IWRITE)
+        error = self.cli('export', copy.name, 'baseline', '--template-sha256', pin, ok=False)
+        self.assertIn('requires qualified, authorized desktop readback', error)
+        self.assertFalse((self.store / 'review').exists())
+        version = hashlib.sha256(files['template.xlsm']).hexdigest()
+        # Exercise the attestation contract with synthetic bytes, not desktop qualification.
+        self.cli('export', copy.name, 'baseline', '--template-sha256', pin, '--desktop-verified', version)
+        self.assertFalse((self.store / 'sync.json').exists())
+        self.publish('baseline')
+        reviewed = self.preview_digest('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', reviewed)
+        sync = json.loads((self.store / 'sync.json').read_bytes())
+        self.assertEqual(sync, {'schema': 1, 'workbook': copy.name, 'versionSha256': version,
+                                'manifestSha256': reviewed})
+        manifest = json.loads((self.repo / 'baseline/manifest.json').read_bytes())
+        self.assertEqual(manifest['templateManifestSha256'], pin)
+        self.assertEqual((self.store / 'versions' / f'{version}.xlsm').read_bytes(), files['template.xlsm'])
+        for name, data in files.items():
+            self.assertEqual((folder / name).read_bytes(), data)
+
+    def test_missing_and_modified_companions_block_before_copy(self):
+        pin, folder, files = self.pin_template()
+        path = folder / 'Form.frx'
+        path.chmod(stat.S_IRUSR | stat.S_IWRITE)
+        path.unlink()
+        error = self.cli('copy-template', 'model.xlsm', '--template-sha256', pin, ok=False)
+        self.assertIn('missing', error)
+        path.touch(mode=0o600)
+        path.write_bytes(b'not the approved companion')
+        path.chmod(stat.S_IRUSR)
+        error = self.cli('copy-template', 'model.xlsm', '--template-sha256', pin, ok=False)
+        self.assertIn('companion checksum', error)
+        self.assertFalse((self.repo / 'model.xlsm').exists())
+        self.assertFalse((self.store / 'review').exists())
+        self.assertFalse((self.store / 'sync.json').exists())
+        self.assertEqual((folder / 'template.xlsm').read_bytes(), files['template.xlsm'])
+
+    def test_pinned_manifest_cannot_omit_referenced_frx(self):
+        pin, _, _ = self.pin_template(declare_frx=False)
+        error = self.cli('copy-template', 'model.xlsm', '--template-sha256', pin, ok=False)
+        self.assertIn('missing or unsupported FRX reference', error)
+        self.assertFalse((self.repo / 'model.xlsm').exists())
+
+    def test_pinned_workbook_cannot_omit_referenced_vba_project(self):
+        pin, _, _ = self.pin_template(missing_vba=True)
+        error = self.cli('copy-template', 'model.xlsm', '--template-sha256', pin, ok=False)
+        self.assertIn('missing or unsupported VBA project part', error)
+        self.assertFalse((self.repo / 'model.xlsm').exists())
+
+    def test_template_copy_is_never_overwritten_or_converted(self):
+        pin, _, _ = self.pin_template()
+        for name in ('model.xlsx', 'model.xlsb', 'model.xlam', 'model.xls'):
+            with self.subTest(name=name):
+                error = self.cli('copy-template', name, '--template-sha256', pin, ok=False)
+                self.assertIn('conversion is not supported', error)
+                self.assertFalse((self.repo / name).exists())
+        occupied = self.repo / 'model.xlsm'
+        occupied.write_bytes(b'untouched')
+        error = self.cli('copy-template', occupied.name, '--template-sha256', pin, ok=False)
+        self.assertIn('Choose a new workbook path', error)
+        self.assertEqual(occupied.read_bytes(), b'untouched')
+
+    def test_renaming_xlsm_to_xlsx_does_not_convert_it(self):
+        save_fixture(self.book, '2+2', macros=True)
+        error = self.export('baseline', ok=False)
+        self.assertIn('Saved workbook format does not match .XLSX', error)
+        self.assertEqual(list(self.store.iterdir()), [])
+
+    def test_saved_blank_xlsx_uses_the_same_initial_acceptance(self):
+        save_fixture(self.book, None)
+        version = hashlib.sha256(self.book.read_bytes()).hexdigest()
+        error = self.cli('export', self.book.name, 'baseline', '--desktop-verified', '0' * 64, ok=False)
+        self.assertIn('desktop-verified checksum does not match', error)
+        self.cli('export', self.book.name, 'baseline', '--desktop-verified', version)
+        self.assertFalse((self.store / 'sync.json').exists())
+        self.publish('baseline')
+        reviewed = self.preview_digest('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', reviewed)
+        baseline = self.repo / 'baseline'
+        self.assertEqual(json.loads((baseline / 'ordinary-formulas.json').read_bytes())['cells'], [])
+        self.assertEqual(json.loads((self.store / 'sync.json').read_bytes())['versionSha256'], version)
 
     def test_saved_versions_and_explicit_initial_sync(self):
         neighbor = self.repo / 'neighbor.xlsx'
@@ -161,7 +291,8 @@ class OnboardingTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    sys.stdout.reconfigure(encoding='utf-8')
+    if isinstance(sys.stdout, TextIOWrapper):
+        sys.stdout.reconfigure(encoding='utf-8')
     if sys.argv[1:2] == ['--watch-neighbor']:
         def block_neighbor_open(event, args):
             if event == 'open' and isinstance(args[0], str) and Path(args[0]).name == 'neighbor.xlsx':
