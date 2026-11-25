@@ -223,7 +223,3 @@ also works before the first workbook. On explicit opt-in, give exactly one next 
 next-step pointer below. On refusal, leave the Excel scaffold untouched. Matt's setup does not
 invoke or install the beta, create or edit its scaffold, or onboard a workbook. The beta reuses
 the tracker and knowledge layout configured here.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

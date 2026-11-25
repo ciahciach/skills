@@ -65,7 +65,3 @@ Wait without a deadline. Silence is **not** an answer:
 
 The frontier stays open until the user answers it or explicitly parks it. Parking is a decision the
 user states, not one you infer.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

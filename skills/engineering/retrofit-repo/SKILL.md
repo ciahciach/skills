@@ -102,7 +102,3 @@ nie wiesz, gdzie jesteś — `/granica`.
 
 Pięć linii i tabela: co jest zgodne, co rozjechane, ile biletów powstało, czego **nie** ruszyłeś
 i dlaczego. Bez tego raportu użytkownik nie wie, czy oddać repo agentowi na partię 01.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

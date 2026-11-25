@@ -76,7 +76,3 @@ When the repo keeps an LLM wiki, ADRs live in `wiki/decisions/`, not `docs/adr/`
 glossary is still `GLOSSARY.md` at the root (linked from `wiki/index.md`). Read the decision pages
 that touch the modules you are scanning before proposing a deepening: half of what looks like a
 missing seam is a decision already taken for a reason.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

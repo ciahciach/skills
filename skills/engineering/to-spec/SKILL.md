@@ -79,7 +79,3 @@ Any further notes about the feature.
 The spec is published to the tracker. When the repo has a wiki, add one line to `wiki/index.md`
 pointing at it plus a `log.md` entry: do not paste the spec body into a wiki page. Two copies of a
 spec drift within a week, and the tracker copy is the one tickets are cut from.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.
