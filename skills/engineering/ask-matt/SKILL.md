@@ -88,6 +88,7 @@ stan tej sesji i mówi, co wpisać.
 
 Off the main flow entirely.
 
+- **`/co-dalej`** (local to this fork): type it yourself to get one read-only recommendation for the current Issue, PR, graph or workbook. It uses actual evidence and stops before carrying out the recommendation. Use `/granica` instead for a context/session boundary decision.
 - **`/handoff`** in Kilo VS Code routes same-checkout continuation to **`/kilo-handoff`**. On explicit request it seeds a fresh session with the condensed context, then records release, verification of local Git changes, and claim before the successor writes.
 - **`/spawn`**: start an explicitly requested Kilo VS Code Agent Manager session without transferring write ownership. Use `local` for a fresh session in the same checkout and `worktree` for isolation on an agreed base. `spawn` reconciles uncertain starts, but does not schedule an issue graph. Internal subagents are not Agent Manager sessions.
 
@@ -111,7 +112,3 @@ Off the main flow entirely.
 **`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
 
 **`excel-router`** (Kilo VS Code on Windows, optional beta): for workbook work rather than repo setup, load this skill first when available. It selects a scoped recipe or reports a blocker; it is not shipped in the plugin.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

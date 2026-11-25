@@ -130,7 +130,3 @@ User invokes with a map (URL or number). A ticket is **optional**: without one, 
 6. Add newly-surfaced tickets (create-then-wire); graduate any fog the answer has made specifiable, clearing each graduated patch from **Not yet specified** so it lives only as its new ticket. If the answer reveals that a ticket (this one or another) sits beyond the destination, **rule it out of scope** rather than resolving it on the route. If the decision invalidates other parts of the map, update or delete those tickets.
 
 The user may run unblocked tickets in parallel, so expect other sessions to be editing the tracker concurrently.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

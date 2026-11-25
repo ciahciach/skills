@@ -1,0 +1,5 @@
+interface:
+  display_name: Co dalej
+  short_description: Wskaż jeden następny krok na podstawie dowodów
+policy:
+  allow_implicit_invocation: false

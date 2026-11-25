@@ -265,6 +265,7 @@ Skills I use daily for code work.
 **User-invoked**
 
 - **[ask-matt](./skills/engineering/ask-matt/SKILL.md)**: Ask which skill or flow fits your situation. A router over the user-invoked skills in this repo.
+- **[co-dalej](./skills/engineering/co-dalej/SKILL.md)** (local to this fork): Type `/co-dalej` in the Kilo checkout for one evidence-based next step, without executing it. [Usage and verification](./docs/engineering/co-dalej.md).
 - **[granica](./skills/engineering/granica/SKILL.md)**: Decide the phase boundary: continue, `/clear`, `/handoff`, subagent or `/compact`, from what actually happened in the session.
 - **[grill-with-docs](./skills/engineering/grill-with-docs/SKILL.md)**: Grilling session that also builds your project's domain model, sharpening terminology and updating `GLOSSARY.md` and ADRs inline.
 - **[triage](./skills/engineering/triage/SKILL.md)**: Move issues through a state machine of triage roles.

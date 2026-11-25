@@ -116,7 +116,6 @@ related_objects: []
   `domain.md`. Reszta skilli czyta z nich tracker i ścieżki — bez nich każdy krok zgaduje.
 - Kolejność: `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement` (bilet po bilecie)
   → `/code-review` → `/retro` po dużej fali.
-- Gdy nie wiesz, co dalej: `/co-dalej` — czyta stan repo i podaje **jeden** krok, nie mapę.
 - Nie uruchamiaj skillu, którego artefakt już istnieje (np. `/to-spec`, gdy spec leży w repo).
 - `New Task` = czysty kontekst; `/compact` = streszczenie w tym samym tasku. Nie compactuj
   w środku fazy, tylko na granicy: wywiad → spec → bilety → implementacja.
