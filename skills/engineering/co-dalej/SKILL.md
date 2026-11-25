@@ -33,8 +33,7 @@ Od góry, pierwsze trafienie wygrywa:
    nazw to zgadywanie.
 3. **Słownik jest, brak spec, robota wielosesyjna** → `/to-spec`.
 4. **Jest spec, brak biletów** → `/to-tickets`.
-5. **Są bilety, brak kodu** → `/implement` (bilet po bilecie, nowa sesja między), `/implement-wave`
-   (kilka niezależnych biletów naraz, gdy ich pliki są rozłączne) albo `/implement-spec` (całość).
+5. **Są bilety, brak kodu** → `/implement` (bilet po bilecie) albo `/implement-spec` (cały graf).
 6. **Jest kod, brak review** → `/code-review`.
 7. **Review zrobiony, jest commit/PR** → `/retro`, jeśli fala była duża; inaczej koniec zadania.
 8. **Pytanie „czy codebase to już ma?”** → `/triage` na zgłoszeniach, potem `/implement`.

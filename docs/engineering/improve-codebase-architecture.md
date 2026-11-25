@@ -41,7 +41,7 @@ The skill rests on one idea: **depth**. A deep module puts a lot of behaviour be
 
 For each one, it proposes the deepening that fixes it.
 
-Each candidate is a card with the files involved, the friction, a plain-English solution, the benefit in terms of **locality** and **leverage**, a before/after diagram, and a strength badge.
+Each candidate is a card with the files involved, the friction, a solution described in plain Polish, the benefit in terms of **locality** and **leverage**, a before/after diagram, and a strength badge.
 
 | Badge | What it means for you |
 | --- | --- |

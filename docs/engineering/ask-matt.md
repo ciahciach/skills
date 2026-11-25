@@ -46,7 +46,7 @@ The skill's other key idea is the **phase boundary**. A phase is a chunk of work
 | **Subagent** | The task is scoped tightly enough to run with you [away from the keyboard](https://www.aihero.dev/ai-coding-dictionary/afk) |
 | **`/compact`** | None of the above. It is the default, and the tree often ends here |
 
-People often get two of these wrong, which is why the router gives the order and not only the list. `/handoff` looks like the general way to move between context windows, but it is not. All it gives you is portability. `/compact` is the last option in the tree, not the first, because each of the four options above it is cheaper or more precise.
+People often get two of these wrong, which is why the router gives the order and not only the list. In Kilo VS Code, `/handoff` routes same-checkout continuation to [`kilo-handoff`](kilo-handoff.md); `/handoff --portable` writes a document that travels. Outside Kilo VS Code, `/handoff` uses the portable route by default. `/compact` remains the last option in the tree because each earlier option is cheaper or more precise when it applies.
 
 ## Common questions
 
