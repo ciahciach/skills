@@ -1371,6 +1371,271 @@ def unique_json_object(pairs):
     return result
 
 
+VBA_PART = 'xl/vbaProject.bin'
+VBA_SOURCE = 'vba-module-source-v1'
+VBA_OPERATION = 'existing-vba-module-import'
+VBA_PROFILE = 'restricted-xlsm'
+VBA_NAMES = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,30}')
+VBA_CONTROLS = dict.fromkeys(('macros', 'events', 'refresh', 'updateLinks', 'autoSave'), False)
+VBA_PACKAGE_PARTS = re.compile(
+    r'\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app)\.xml|'
+    r'xl/(?:workbook\.xml|_rels/workbook\.xml\.rels|worksheets/sheet[0-9]+\.xml|'
+    r'theme/theme[0-9]+\.xml|styles\.xml|sharedStrings\.xml|calcChain\.xml|vbaProject\.bin)'
+)
+
+
+def vba_package(data):
+    workbook_artifacts(data, '.xlsm', format_only=True)
+    with ZipFile(BytesIO(data)) as book:
+        if sum(item.file_size for item in book.infolist()) > MAX_PACKAGE:
+            raise Blocked('XLSM exceeds the package comparison limit.')
+        names = book.namelist()
+        if VBA_PART not in names or any(not VBA_PACKAGE_PARTS.fullmatch(name) for name in names):
+            raise Blocked('XLSM contains unsupported or unverifiable package parts.')
+        for name in ('_rels/.rels', 'xl/_rels/workbook.xml.rels', '[Content_Types].xml'):
+            raw = book.read(name)
+            text = raw.decode('utf-8-sig')
+            if '\0' in text or '<!' in text:
+                raise Blocked('Unsupported XLSM package metadata.')
+            records = list(ET.fromstring(text))
+            if any(node.get('TargetMode', 'Internal') != 'Internal' for node in records) or any(
+                    token in text.lower() for token in ('macrosheet', 'signature', 'externallink', 'connections')):
+                raise Blocked('XLSM has an unsupported signature, link, connection or XLM capability.')
+            if name == 'xl/_rels/workbook.xml.rels':
+                if [node.get('Target') for node in records if node.get('Type') == VBA_PROJECT] != ['vbaProject.bin']:
+                    raise Blocked('Expected the VBA project at its canonical XLSM part.')
+        hosts: list[str] = []
+        for name in names:
+            if name == 'xl/workbook.xml' or re.fullmatch(r'xl/worksheets/sheet[0-9]+\.xml', name):
+                text = book.read(name).decode('utf-8-sig')
+                if '\0' in text or '<!' in text:
+                    raise Blocked('Unsupported XLSM host metadata.')
+                node = ET.fromstring(text)
+                prop = 'workbookPr' if name == 'xl/workbook.xml' else 'sheetPr'
+                hosts.extend(item.get('codeName', '') for item in node.findall(f'{S}{prop}'))
+        if (len(hosts) != 1 + sum(name.startswith('xl/worksheets/') for name in names)
+                or any(not VBA_NAMES.fullmatch(host) for host in hosts)
+                or len({host.casefold() for host in hosts}) != len(hosts)):
+            raise Blocked('Expected one explicit, unique code name for each workbook and worksheet VBA host.')
+        return sha(book.read(VBA_PART)), set(hosts)
+
+
+def vba_readback(raw, expected_sha, stage, workbook_sha, hosts):
+    record = json.loads(raw, object_pairs_hook=unique_json_object)
+    fields = {'workbookSha256', 'stage', 'evidence', 'projectPolicy', 'complete',
+              'referencesSha256', 'projectMetadataSha256', 'modules'}
+    if (sha(raw) != expected_sha or not isinstance(record, dict) or set(record) != fields or record['stage'] != stage
+            or record['workbookSha256'] != workbook_sha or not EVIDENCE_REF.fullmatch(record['evidence'])
+            or CREDENTIAL.search(record['evidence'])):
+        raise Blocked('A pinned VBA readback must identify its exact saved workbook and stage.')
+    if record['projectPolicy'] != 'editable-unsigned' or record['complete'] is not True:
+        raise Blocked('VBA project is protected, restricted, or not fully observable. No bypass is permitted.')
+    if any(not SHA.fullmatch(record[key]) for key in ('referencesSha256', 'projectMetadataSha256')):
+        raise Blocked('VBA project or reference evidence is missing.')
+    modules = vba_modules(record['modules'], metadata=True)
+    if {name for name, module in modules.items() if module['kind'] == 'document'} != hosts:
+        raise Blocked('Document module inventory does not match the saved workbook and worksheet code names.')
+    return modules, (record['referencesSha256'], record['projectMetadataSha256']), record['evidence']
+
+
+def vba_modules(modules, *, metadata=False):
+    fields = {'kind', 'source', 'metadataSha256'} if metadata else {'kind', 'source'}
+    if (not isinstance(modules, dict) or not 1 <= len(modules) <= 100
+            or len({name.casefold() for name in modules}) != len(modules)):
+        raise Blocked('VBA inventory is empty, ambiguous, or exceeds the supported limit.')
+    for name, module in modules.items():
+        if CREDENTIAL.search(name):
+            raise Blocked('Credential-like content prevents VBA export or import.')
+        if (not VBA_NAMES.fullmatch(name) or not isinstance(module, dict) or set(module) != fields
+                or module['kind'] not in ('standard', 'class', 'document')
+                or metadata and not SHA.fullmatch(module['metadataSha256'])):
+            raise Blocked('Unsupported VBA component or missing module identity evidence.')
+        text = module['source']
+        if not metadata:
+            if not isinstance(text, list) or not text or any(not isinstance(line, str) or '\n' in line for line in text):
+                raise Blocked('Expected an editable VBA source array with one string per line.')
+            text = '\n'.join(text)
+        if not isinstance(text, str) or '\r' in text or '\0' in text or re.search(r'(?im)^\s*Attribute\s', text):
+            raise Blocked('Expected LF-normalized editable code only, without VBE attributes.')
+        if CREDENTIAL.search(text):
+            raise Blocked('Credential-like content prevents VBA export or import.')
+    return modules
+
+
+def vba_source(modules):
+    return {'kind': VBA_SOURCE, 'modules': {name: {'kind': module['kind'], 'source': module['source'].split('\n')}
+                                           for name, module in sorted(modules.items())}}
+
+
+def vba_export_artifacts(sync, modules, snapshot_sha, evidence):
+    artifact = json_bytes(vba_source(modules))
+    manifest = {'kind': 'private-vba-export', 'workbook': sync['workbook'], 'versionSha256': sync['versionSha256'],
+                'snapshotSha256': snapshot_sha, 'operatorReopenEvidence': evidence,
+                'files': {'vba-modules.json': sha(artifact)}}
+    return {'manifest.json': json_bytes(manifest), 'vba-modules.json': artifact}
+
+
+def vba_workflow(root, store, args):
+    sync_file = store / 'sync.json'
+    preview = preview_path(store, args.label)
+    require_private(store, sync_file, preview.parent, preview)
+    if preview.exists():
+        raise Blocked('Choose a new private review label.')
+    sync_bytes = read_bounded(sync_file, MAX_XML)
+    sync = json.loads(sync_bytes, object_pairs_hook=unique_json_object)
+    metadata, _ = verified_export(root, store, repo_path(root, args.baseline), sync['manifestSha256'])
+    if any(sync.get(key) != metadata[key] for key in ('schema', 'workbook', 'versionSha256')):
+        raise Blocked('The synchronization point does not identify the retained workbook.')
+    source = workbook_path(root, metadata['workbook'], metadata.get('templateManifestSha256'))
+    if source.suffix.lower() != '.xlsm' or git(root, 'check-ignore', '--quiet', '--', sync['workbook']).returncode:
+        raise Blocked('VBA workflow requires a pinned, Git-ignored XLSM workbook.')
+    template = store / 'templates' / metadata['templateManifestSha256'] / 'template.json'
+    if json.loads(read_bounded(template, MAX_XML))['companions']:
+        raise Blocked('XLSM with UserForm companions requires the separate native form workflow.')
+    version = sync['versionSha256']
+    retained = store / 'versions' / f'{version}.xlsm'
+    base = retained_bytes(retained, version)
+    live = read_bounded(source, MAX_PACKAGE)
+    base_project, hosts = vba_package(base)
+    live_project, live_hosts = vba_package(live)
+    if args.command == 'vba-export':
+        snapshot_path = repo_path(store, args.snapshot)
+        require_private(snapshot_path.parent, snapshot_path)
+        modules, _, evidence = vba_readback(read_bounded(snapshot_path, MAX_XML), args.snapshot_sha256,
+                                            'baseline-reopen', version, hosts)
+        if (live != base or read_bounded(source, MAX_PACKAGE) != live or read_bounded(sync_file, MAX_XML) != sync_bytes
+                or source.with_name('~$' + source.name).exists()):
+            raise Blocked('VBA baseline export requires the exact saved retained base.')
+        artifacts = vba_export_artifacts(sync, modules, args.snapshot_sha256, evidence)
+        preview.parent.mkdir(mode=0o700, exist_ok=True)
+        write_export(preview, artifacts)
+        print(f'Exported VBA source for private disclosure review. Manifest SHA-256: {sha(artifacts["manifest.json"])}')
+        return
+
+    if not args.route_sha256 or not SHA.fullmatch(args.route_sha256):
+        raise Blocked('A pinned, authorized desktop route and no-op evidence are required.')
+    route_dir = repo_path(store, 'vba-routes/' + args.route_sha256)
+    route_file, baseline_file, noop_snapshot = (route_dir / name for name in ('route.json', 'baseline.json', 'noop.json'))
+    attempt = repo_path(store, 'candidates/' + args.label)
+    candidate, receipt, reopened = (attempt / name for name in ('workbook.xlsm', 'plan.json', 'reopen.json'))
+    lock = candidate.with_name('~$' + candidate.name)
+    require_private(route_dir.parent, route_dir, route_file, baseline_file, noop_snapshot,
+                    attempt.parent, attempt, candidate, receipt, reopened)
+    if (lock.exists() or attempt.exists() != (args.command == 'vba-verify')
+            or candidate.exists() and candidate.stat().st_nlink != 1):
+        raise Blocked('Expected an unlocked copy and a new label before apply, or a prepared candidate for verification.')
+    raw_route = read_bounded(route_file, MAX_XML)
+    route = json.loads(raw_route, object_pairs_hook=unique_json_object)
+    fields = ('entryPoint', 'backend', 'backendVersion', 'excelBuild', 'qualification', 'authorization', 'noOpSave')
+    if not isinstance(route, dict):
+        raise Blocked('Expected a pinned VBA route receipt object.')
+    controls = route.get('openingControls')
+    if (sha(raw_route) != args.route_sha256 or route.get('operation') != VBA_OPERATION
+            or route.get('profile') != VBA_PROFILE or route.get('evidenceClass') != 'desktop'
+            or route.get('candidate') != args.label or route.get('inputSha256') != sha(live)
+            or not isinstance(controls, dict) or controls.keys() != VBA_CONTROLS.keys()
+            or any(value is not False for value in controls.values())
+            or any(not EVIDENCE_REF.fullmatch(route[key]) or CREDENTIAL.search(route[key]) for key in fields)):
+        raise Blocked('Desktop route evidence does not match qualification, authorization or current inputs.')
+    snapshot_sha = route['baselineSnapshotSha256']
+    modules, project, baseline_evidence = vba_readback(read_bounded(baseline_file, MAX_XML), snapshot_sha,
+                                                       'baseline-reopen', version, hosts)
+    baseline_manifest = vba_export_artifacts(sync, modules, snapshot_sha, baseline_evidence)['manifest.json']
+    if args.reviewed_vba != sha(baseline_manifest):
+        raise Blocked('The desktop baseline does not match the reviewed VBA export manifest.')
+    edit_path = repo_path(root, args.edit)
+    edit = read_bounded(edit_path, MAX_XML)
+    proposal = json.loads(edit, object_pairs_hook=unique_json_object)
+    if not isinstance(proposal, dict) or set(proposal) != {'kind', 'modules'} or proposal['kind'] != VBA_SOURCE:
+        raise Blocked('Expected the editable VBA source artifact, not an inventory.')
+    desired = vba_modules(proposal['modules'])
+    if {name: row['kind'] for name, row in modules.items()} != {name: row['kind'] for name, row in desired.items()}:
+        raise Blocked('VBA import cannot add, remove, rename or replace any component.')
+    changed = sorted(name for name in modules if modules[name]['source'].split('\n') != desired[name]['source'])
+    if base_project != live_project or hosts != live_hosts:
+        raise Blocked('Saved VBA project differs from sync. Proposed changes: '
+                      + (', '.join(changed) or 'none') + '. No merge attempted.')
+    if not changed:
+        raise Blocked('No existing VBA module code changed.')
+    if live != base and preserved_parts(live, VBA_PART, allow_cell_values=True) != preserved_parts(
+            base, VBA_PART, allow_cell_values=True):
+        raise Blocked('Workbook drift beyond supported numeric/boolean data-only changes.')
+
+    def preserved(result, folder):
+        vba_package(result)
+        before, after = preserved_parts(live, VBA_PART), preserved_parts(result, VBA_PART)
+        if before.get('xl/workbook.xml') != after.get('xl/workbook.xml'):
+            if excel_copy_metadata_changes(live, result, folder) is None:
+                return False
+            before.pop('xl/workbook.xml')
+            after.pop('xl/workbook.xml')
+        return before == after
+
+    noop_copy = repo_path(store, route['noOpPath'])
+    noop_lock = noop_copy.with_name('~$' + noop_copy.name)
+    require_private(noop_copy.parent, noop_copy)
+    if (noop_copy.is_relative_to(attempt) or noop_copy.is_relative_to(retained.parent)
+            or noop_copy.suffix.lower() != '.xlsm' or noop_copy.name.startswith('~$') or noop_lock.exists()
+            or noop_copy.stat().st_nlink != 1):
+        raise Blocked('Expected an unlocked and separate no-op XLSM copy in private storage.')
+    noop = read_bounded(noop_copy, MAX_PACKAGE)
+    noop_modules, noop_project, noop_evidence = vba_readback(read_bounded(noop_snapshot, MAX_XML),
+                                                            route['noOpSnapshotSha256'], 'noop-reopen', sha(noop), hosts)
+    if (route['noOpSha256'] != sha(noop) or route['noOpSave'] == noop_evidence
+            or (noop_modules, noop_project) != (modules, project)
+            or not preserved(noop, noop_copy.parent)):
+        raise Blocked('No-op save/reopen did not preserve workbook contents or VBA project identity.')
+    plan = {'operation': VBA_OPERATION, 'profile': VBA_PROFILE, 'candidate': args.label,
+            'workbook': sync['workbook'], 'retainedSha256': version, 'inputSha256': sha(live),
+            'syncSha256': sha(sync_bytes), 'editSha256': sha(edit), 'routeSha256': args.route_sha256,
+            'reviewedVbaSha256': args.reviewed_vba, 'noOpSha256': sha(noop), 'changedModules': changed,
+            'checks': ['module source and identity', 'workbook and worksheet host code names', 'references',
+                       'project topology', 'adjacent workbook parts'], 'runMacros': False, 'refresh': False}
+    approval = sha(json_bytes(plan))
+    if args.command == 'vba-plan':
+        print(json_bytes({**plan, 'planSha256': approval}).decode('utf-8'), end='')
+        return
+    workbook_path(root, sync['workbook'], metadata['templateManifestSha256'])
+    if (approval != args.approved_plan or read_bounded(source, MAX_PACKAGE) != live
+            or read_bounded(sync_file, MAX_XML) != sync_bytes or read_bounded(edit_path, MAX_XML) != edit or lock.exists()):
+        raise Blocked('Inputs no longer match the approved VBA dry-run.')
+    proof = json_bytes({'planSha256': approval})
+    if args.command == 'vba-prepare':
+        attempt.parent.mkdir(mode=0o700, exist_ok=True)
+        write_export(attempt, {candidate.name: live, receipt.name: proof})
+        print('Prepared a private XLSM copy. No Excel save, macro, or refresh was performed.')
+        return
+
+    if (read_bounded(receipt, MAX_XML) != proof or not EVIDENCE_REF.fullmatch(args.save_evidence)
+            or CREDENTIAL.search(args.save_evidence)):
+        raise Blocked('A matching preparation receipt and separate desktop save evidence are required.')
+    result = read_bounded(candidate, MAX_PACKAGE)
+    observed, observed_project, evidence = vba_readback(read_bounded(reopened, MAX_XML), args.reopened,
+                                                        'candidate-reopen', sha(result), hosts)
+    if (args.saved != sha(result) or evidence == args.save_evidence or vba_package(result)[0] == live_project
+            or not preserved(result, attempt)
+            or vba_source(observed)['modules'] != desired or observed_project != project
+            or {name: row['metadataSha256'] for name, row in observed.items()}
+            != {name: row['metadataSha256'] for name, row in modules.items()}):
+        raise Blocked('Saved copy did not preserve workbook and VBA identity or match the intended VBA source.')
+    if (read_bounded(candidate, MAX_PACKAGE) != result or lock.exists()
+            or read_bounded(source, MAX_PACKAGE) != live or read_bounded(sync_file, MAX_XML) != sync_bytes):
+        raise Blocked('Workbook or synchronization point changed during verification.')
+    artifact = json_bytes(vba_source(observed))
+    report = {'kind': 'private-vba-copy-verification', 'workbook': sync['workbook'], 'retainedSha256': version,
+              'candidateSha256': sha(result), 'planSha256': approval, 'reopenSnapshotSha256': args.reopened,
+              'checks': {'noOpPreservation': 'VERIFIED_AGAINST_ATTESTED_READBACK',
+                         'reExport': 'VERIFIED_AGAINST_ATTESTED_READBACK', 'macrosExecutedByCli': False,
+                         'vbeCompilation': 'NOT_RUN', 'fixtureScenario': 'NOT_RUN'},
+              'operatorAttestations': {'routeSha256': args.route_sha256, 'openingControls': VBA_CONTROLS,
+                                       'noOpReopen': noop_evidence,
+                                       'save': args.save_evidence, 'reopen': evidence},
+              'files': {'vba-modules.json': sha(artifact)}}
+    preview.parent.mkdir(mode=0o700, exist_ok=True)
+    write_export(preview, {'manifest.json': json_bytes(report), 'vba-modules.json': artifact})
+    print('Verified saved workbook parts and attested VBA readback. No synchronization was performed.')
+
+
 def verify_query_copy(data, snapshot, result, expected, folder):
     observed = checked_query_snapshot(result)
     if observed.queries != expected:
@@ -1745,6 +2010,25 @@ def main():
             command.add_argument('--reviewed', required=True, help='Verified re-export manifest SHA-256.')
     pilot = commands.add_parser('pq-pilot', help='Run the disposable native Power Query pilot on Windows.')
     pilot.add_argument('--desktop', action='store_true', help='Authorize Excel to create a fresh synthetic fixture.')
+    for name in ('vba-export', 'vba-plan', 'vba-prepare', 'vba-verify'):
+        command = commands.add_parser(name)
+        command.add_argument('baseline', help='Published workbook export at the approved synchronization point.')
+        if name != 'vba-export':
+            command.add_argument('edit', help='Reviewed vba-modules.json, relative to the worktree.')
+        command.add_argument('label', help='New private review or candidate label.')
+        command.add_argument('--store', required=True)
+        if name == 'vba-export':
+            command.add_argument('--snapshot', required=True, help='Desktop readback JSON relative to the private store.')
+            command.add_argument('--snapshot-sha256', required=True)
+        else:
+            command.add_argument('--route-sha256')
+            command.add_argument('--reviewed-vba', required=True, help='SHA-256 of the reviewed vba-export manifest.')
+        if name in ('vba-prepare', 'vba-verify'):
+            command.add_argument('--approved-plan', required=True)
+        if name == 'vba-verify':
+            command.add_argument('--saved', required=True, help='Candidate workbook SHA-256 attested after save/close.')
+            command.add_argument('--reopened', required=True, help='Independent reopen.json SHA-256.')
+            command.add_argument('--save-evidence', required=True)
     args = parser.parse_args()
     try:
         if args.command == 'pq-pilot':
@@ -1770,6 +2054,8 @@ def main():
             return controlled_import(root, store, args)
         elif args.command in ('pq-load-review', 'pq-load-accept'):
             power_query_load_change(root, store, args)
+        elif args.command.startswith('vba-'):
+            vba_workflow(root, store, args)
         else:
             power_query_import(root, store, args)
     except (Blocked, QueryBlocked) as error:

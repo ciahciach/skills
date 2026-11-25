@@ -127,7 +127,7 @@ def make_writable(path: Path):
 
 
 def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, simple=False,
-                 queries=False, copy_metadata='', extra_cells=''):
+                 queries=False, copy_metadata='', extra_cells='', vba_hosts=False):
     content_type = ('application/vnd.ms-excel.sheet.macroEnabled.main+xml' if macros
                     else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml')
     vba_type = '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' if macros else ''
@@ -135,6 +135,8 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, s
                 'Target="vbaProject.bin"/>') if macros else ''
     connections = f'<Relationship Id="rId3" Type="{OFFICE}/connections" Target="connections.xml"/>' if queries else ''
     tables = '<tableParts count="1"><tablePart r:id="rId1"/></tableParts>' if queries else ''
+    workbook_props = '<workbookPr codeName="ThisWorkbook"/>' if vba_hosts else ''
+    sheet_props = '<sheetPr codeName="Sheet1"/>' if vba_hosts else ''
     query_type = ('<Override PartName="/xl/queryTables/queryTable1.xml" '
                   'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"/>') if queries else ''
     with ZipFile(path, 'w') as book:
@@ -147,7 +149,7 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, s
           <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
         </Types>''')
         book.writestr('_rels/.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-        book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}">{copy_metadata}'
+        book.writestr('xl/workbook.xml', f'<workbook xmlns="{SHEET}" xmlns:r="{OFFICE}">{copy_metadata}{workbook_props}'
                       '<sheets><sheet name="Model" sheetId="1" r:id="rId1"/></sheets></workbook>')
         book.writestr('xl/_rels/workbook.xml.rels', f'<Relationships xmlns="{PACKAGE}"><Relationship Id="rId1" Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"/>{vba_link}{connections}</Relationships>')
         rows = '' if expression is None else f'''
@@ -162,7 +164,7 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, s
             cached = {'2+2': 4, '2+3': 5, '2+4': 6}[expression]
             rows = (f'<row r="1"><c r="A1"><f>{escape(expression)}</f><v>{cached}</v></c>'
                     f'<c r="B1"><v>{data}</v></c><c r="C1"><f>2*2</f><v>4</v></c></row>')
-        book.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{SHEET}" xmlns:r="{OFFICE}"><sheetData>{rows}</sheetData>{tables}</worksheet>')
+        book.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{SHEET}" xmlns:r="{OFFICE}">{sheet_props}<sheetData>{rows}</sheetData>{tables}</worksheet>')
         if macros and not missing_vba:
             book.writestr('xl/vbaProject.bin', b'Synthetic opaque VBA bytes')
 
@@ -324,11 +326,13 @@ class OnboardingTest(unittest.TestCase):
     def preview_digest(self, label):
         return hashlib.sha256((self.store / 'review' / label / 'manifest.json').read_bytes()).hexdigest()
 
-    def pin_template(self, *, declare_frx=True, missing_vba=False):
+    def pin_template(self, *, declare_frx=True, missing_vba=False, module_only=False):
         source = self.store / 'fixture.xlsm'
-        save_fixture(source, '2+2', macros=True, missing_vba=missing_vba)
-        files = {'template.xlsm': source.read_bytes(), 'Form.frm': b'Picture = "Form.frx":0000\r\n'}
-        if declare_frx:
+        save_fixture(source, '2+2', macros=True, missing_vba=missing_vba, vba_hosts=module_only)
+        files = {'template.xlsm': source.read_bytes()}
+        if not module_only:
+            files['Form.frm'] = b'Picture = "Form.frx":0000\r\n'
+        if declare_frx and not module_only:
             files['Form.frx'] = b'Synthetic form resource'
 
         def digest(data):
@@ -350,6 +354,106 @@ class OnboardingTest(unittest.TestCase):
         source.unlink()
         (self.repo / '.gitignore').write_text('*.xlsm\n', encoding='utf-8')
         return pin, folder, files
+
+    def test_vba_workflow_preserves_original_and_verifies_all_module_kinds(self):
+        pin, _, files = self.pin_template(module_only=True)
+        book = self.repo / 'model.xlsm'
+        digest = lambda data: hashlib.sha256(data).hexdigest()
+        version = digest(files['template.xlsm'])
+        self.cli('copy-template', book.name, '--template-sha256', pin)
+        self.cli('export', book.name, 'baseline', '--template-sha256', pin, '--desktop-verified', version)
+        self.publish('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
+        sync = (self.store / 'sync.json').read_bytes()
+        modules = {name: {'kind': kind, 'source': 'Option Explicit\n', 'metadataSha256': '1' * 64}
+                   for name, kind in [('Module1', 'standard'), ('Class1', 'class'),
+                                      ('Sheet1', 'document'), ('ThisWorkbook', 'document'), ('Neighbor', 'standard')]}
+
+        def snapshot(workbook_sha, stage, observed_modules):
+            return json.dumps({'workbookSha256': workbook_sha, 'stage': stage, 'evidence': f'fixture {stage}',
+                               'projectPolicy': 'editable-unsigned', 'complete': True,
+                               'referencesSha256': '2' * 64, 'projectMetadataSha256': '3' * 64,
+                               'modules': observed_modules}).encode()
+
+        original = snapshot(version, 'baseline-reopen', modules)
+        evidence = self.store / 'baseline-vba.json'
+        blocked = original.replace(b'editable-unsigned', b'protected')
+        evidence.write_bytes(blocked)
+        error = self.cli('vba-export', 'baseline', 'vba-base', '--snapshot', evidence.name,
+                         '--snapshot-sha256', digest(blocked), ok=False)
+        self.assertIn('VBA project is protected', error)
+        secret = b'ghp_' + b'x' * 30
+        blocked = original.replace(b'Option Explicit', secret)
+        evidence.write_bytes(blocked)
+        error = self.cli('vba-export', 'baseline', 'vba-base', '--snapshot', evidence.name,
+                         '--snapshot-sha256', digest(blocked), ok=False)
+        self.assertIn('Credential-like content', error)
+        self.assertNotIn(secret.decode(), error)
+        evidence.write_bytes(original)
+        self.cli('vba-export', 'baseline', 'vba-base', '--snapshot', 'baseline-vba.json',
+                 '--snapshot-sha256', digest(original))
+        source = (self.store / 'review/vba-base/vba-modules.json').read_bytes()
+        self.assertNotIn(b'PRIVATE_FIXTURE_DATA', source)
+        self.assertNotIn(b'metadataSha256', source)
+        proposed = json.loads(source)
+        self.assertEqual(set(proposed['modules']), set(modules))
+        for name in ('Module1', 'Class1', 'Sheet1'):
+            proposed['modules'][name]['source'].insert(1, "' reviewed edit")
+        edit = self.repo / 'vba-modules.json'
+        edit.write_bytes(json.dumps(proposed).encode())
+        noop = snapshot(version, 'noop-reopen', modules)
+        route = json.dumps({'operation': 'existing-vba-module-import', 'profile': 'restricted-xlsm',
+                            'evidenceClass': 'desktop', 'entryPoint': 'fixture router', 'backend': 'fixture',
+                            'backendVersion': '1', 'excelBuild': 'fixture build', 'qualification': 'fixture only',
+                            'authorization': 'fixture only', 'noOpSave': 'fixture save', 'candidate': 'change',
+                            'openingControls': dict.fromkeys(('macros', 'events', 'refresh', 'updateLinks', 'autoSave'), False),
+                            'noOpPath': 'noop.xlsm',
+                            'inputSha256': version, 'baselineSnapshotSha256': digest(original),
+                            'noOpSnapshotSha256': digest(noop), 'noOpSha256': version}).encode()
+        routes = self.store / 'vba-routes' / digest(route)
+        routes.parent.mkdir(mode=0o700)
+        routes.mkdir(mode=0o700)
+        (self.store / 'noop.xlsm').write_bytes(book.read_bytes())
+        for name, content in {'route.json': route, 'baseline.json': original, 'noop.json': noop}.items():
+            (routes / name).write_bytes(content)
+        base_args = ('baseline', edit.name, 'change', '--route-sha256', digest(route))
+        reviewed = ('--reviewed-vba', self.preview_digest('vba-base'))
+        self.cli('vba-plan', 'baseline', edit.name, 'change', *reviewed, ok=False)
+        error = self.cli('vba-plan', *base_args, '--reviewed-vba', '0' * 64, ok=False)
+        self.assertIn('does not match the reviewed VBA export', error)
+        args = (*base_args, *reviewed)
+        plan = json.loads(self.cli('vba-plan', *args))
+        self.assertEqual(plan['changedModules'], ['Class1', 'Module1', 'Sheet1'])
+        self.assertFalse((self.store / 'candidates').exists())
+        approval = ('--approved-plan', plan['planSha256'])
+        approved_edit = edit.read_bytes()
+        edit.write_bytes(approved_edit + b' ')
+        self.cli('vba-prepare', *args, *approval, ok=False)
+        self.assertFalse((self.store / 'candidates').exists())
+        edit.write_bytes(approved_edit)
+        self.cli('vba-prepare', *args, *approval)
+        candidate = self.store / 'candidates/change/workbook.xlsm'
+        self.assertEqual(candidate.read_bytes(), book.read_bytes())
+        with ZipFile(book) as base, ZipFile(candidate, 'w') as result:
+            for name in base.namelist():
+                result.writestr(name, b'Synthetic edited VBA bytes' if name == 'xl/vbaProject.bin' else base.read(name))
+        saved = digest(candidate.read_bytes())
+        edited_modules = {name: {**module, 'source': '\n'.join(proposed['modules'][name]['source'])}
+                          for name, module in modules.items()}
+        reopened = candidate.with_name('reopen.json')
+        bad = {**edited_modules, 'Sheet1': {**edited_modules['Sheet1'], 'metadataSha256': '4' * 64}}
+        for observed, ok in ((bad, False), (edited_modules, True)):
+            raw = snapshot(saved, 'candidate-reopen', observed)
+            reopened.write_bytes(raw)
+            self.cli('vba-verify', *args, *approval, '--reopened', digest(raw), '--saved', saved,
+                     '--save-evidence', 'fixture candidate save', ok=ok)
+            self.assertEqual((self.store / 'review/change').exists(), ok)
+        verified = json.loads((self.store / 'review/change/manifest.json').read_bytes())
+        self.assertEqual(verified['checks']['vbeCompilation'], 'NOT_RUN')
+        self.assertEqual(verified['checks']['fixtureScenario'], 'NOT_RUN')
+        self.assertFalse(verified['checks']['macrosExecutedByCli'])
+        self.assertEqual(book.read_bytes(), files['template.xlsm'])
+        self.assertEqual((self.store / 'sync.json').read_bytes(), sync)
 
     def test_pinned_xlsm_is_copied_then_accepted_as_first_sync(self):
         pin, folder, files = self.pin_template()
