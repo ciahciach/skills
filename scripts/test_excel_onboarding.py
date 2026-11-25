@@ -23,6 +23,31 @@ PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 
 class NativePilotTest(unittest.TestCase):
+    def test_scoped_preservation_accounts_for_native_workbook_properties(self):
+        cli = runpy.run_path(str(SCRIPT))
+        workbook = (f'<workbook xmlns="{SHEET}"><extLst>'
+                    '<ext uri="{140A7094-0E35-4892-8432-C4D2E57EDEB5}">'
+                    '<workbookPr xmlns="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" '
+                    'chartTrackingRefBase="1"/></ext>'
+                    '<ext uri="{D14903EA-33C4-47F7-8F05-3474C54BE107}">'
+                    '<version xmlns="http://schemas.microsoft.com/office/spreadsheetml/2024/workbookCompatibilityVersion" '
+                    'setVersion="1"/></ext></extLst></workbook>')
+
+        def preserved(raw, *, scoped=True):
+            data = BytesIO()
+            with ZipFile(data, 'w') as book:
+                book.writestr('xl/workbook.xml', raw)
+            return cli['preservation'](data.getvalue(), {}, scoped=scoped)
+
+        self.assertNotEqual(preserved(workbook), preserved(workbook.replace('setVersion="1"', 'setVersion="2"')))
+        with self.assertRaisesRegex(cli['Blocked'], 'unsupported extensions'):
+            preserved(workbook, scoped=False)
+        for changed in (workbook.replace('setVersion="1"', 'setVersion="1" unexpected="0"'),
+                        workbook.replace('setVersion="1"/>', 'setVersion="1"><payload/></version>'),
+                        workbook.replace('{D14903EA-33C4-47F7-8F05-3474C54BE107}', '{unknown}')):
+            with self.assertRaisesRegex(cli['Blocked'], 'unsupported extensions'):
+                preserved(changed)
+
     def test_formula_import_preserves_only_empty_desktop_style_defaults(self):
         cli = runpy.run_path(str(SCRIPT))
         styles = (f'<styleSheet xmlns="{SHEET}"><extLst>'
@@ -169,6 +194,52 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, s
             book.writestr('xl/vbaProject.bin', b'Synthetic opaque VBA bytes')
 
 
+def save_scoped_fixture(path, *, start=1, named='$B$1', constant=7, spill=None, moved=False, dynamic=True,
+                        global_name='$C$1', table_formula='1+1', revision=0, document_id='1',
+                        metadata_namespace='', metadata_content=''):
+    source = BytesIO()
+    save_fixture(source, '2+2', simple=True, data=constant)
+    with ZipFile(source) as original, ZipFile(path, 'w') as book:
+        for part in original.namelist():
+            xml = original.read(part).decode()
+            if part == 'xl/workbook.xml':
+                if document_id:
+                    guid = f'{document_id * 8}-{document_id * 4}-{document_id * 4}-{document_id * 4}-{document_id * 12}'
+                    xml = xml.replace('</workbook>', '<xr:revisionPtr xmlns:xr="http://schemas.microsoft.com/office/'
+                                      f'spreadsheetml/2014/revision" revIDLastSave="{revision}" '
+                                      f'documentId="13_ncr:1_{{{guid}}}"/></workbook>')
+                xml = xml.replace('</workbook>', '<definedNames><definedName name="Input" localSheetId="0">'
+                                  f'Model!{named}</definedName><definedName name="Input">Model!{global_name}</definedName>'
+                                  '</definedNames></workbook>')
+            if part == 'xl/_rels/workbook.xml.rels':
+                xml = xml.replace('</Relationships>', f'<Relationship Id="meta" Type="{OFFICE}/sheetMetadata" '
+                                  'Target="metadata.xml"/></Relationships>')
+            if part == '[Content_Types].xml':
+                xml = xml.replace('</Types>', '<Override PartName="/xl/metadata.xml" ContentType="application/vnd.'
+                                  'openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/></Types>')
+            if part == 'xl/worksheets/sheet1.xml':
+                row = 3 if moved else 2
+                xml = xml.replace('</sheetData>',
+                                  f'<row r="{row}"><c r="D{row}" cm="1"><f t="array" ref="D{row}:D{row+1}">'
+                                  f'_xlfn.SEQUENCE(2,1,{start})</f><v>{start}</v></c></row>'
+                                  f'<row r="{row+1}"><c r="D{row+1}"><v>{start+1 if spill is None else spill}</v>'
+                                  '</c></row><row r="6"><c r="D6"><f t="array" ref="D6:D7">ROW(D6:D7)</f>'
+                                  '</c><c r="E6"><f t="dataTable" ref="E6:E7"/></c></row></sheetData>'
+                                  '<tableParts count="1"><tablePart r:id="table"/></tableParts>')
+            book.writestr(part, xml)
+        book.writestr('xl/metadata.xml', f'<metadata xmlns="{SHEET}"{metadata_namespace} xmlns:xda="http://schemas.microsoft.com/'
+                      'office/spreadsheetml/2017/dynamicarray"><metadataTypes count="1"><metadataType name="XLDAPR" '
+                      'cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst>'
+                      f'<ext uri="{{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}}"><xda:dynamicArrayProperties '
+                      f'fDynamic="{int(dynamic)}" fCollapsed="0"/></ext></extLst></bk></futureMetadata>'
+                      f'<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata>{metadata_content}</metadata>')
+        book.writestr('xl/worksheets/_rels/sheet1.xml.rels', f'<Relationships xmlns="{PACKAGE}">'
+                      f'<Relationship Id="table" Type="{OFFICE}/table" Target="../tables/table1.xml"/></Relationships>')
+        book.writestr('xl/tables/table1.xml', f'<table xmlns="{SHEET}" id="1" name="Table1" '
+                      'displayName="Table1" ref="G1:G2"><tableColumns count="1"><tableColumn id="1" name="Series">'
+                      f'<calculatedColumnFormula>{table_formula}</calculatedColumnFormula></tableColumn></tableColumns></table>')
+
+
 class OnboardingTest(unittest.TestCase):
     def setUp(self):
         temp_parent = Path(tempfile.gettempdir()) / 'kilo'
@@ -213,17 +284,22 @@ class OnboardingTest(unittest.TestCase):
         self.commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True).strip()
         return ['baseline', 'result.xlsx', '--commit', self.commit]
 
-    def simulated_route(self, *, no_op=None, evidence_class='desktop'):
+    def simulated_route(self, *, no_op=None, evidence_class='desktop', scoped=False, native_com=False):
         # External desktop phases are simulated; this is not runtime qualification.
         routes = self.store / 'routes'
         routes.mkdir(mode=0o700, exist_ok=True)
         original = self.book.read_bytes()
         no_op = original if no_op is None else no_op
-        receipt = json.dumps({'entryPoint': 'synthetic routing fixture', 'backend': 'fixture backend',
-                              'backendVersion': '1', 'excelBuild': 'fixture build', 'qualification': 'test-only',
+        receipt = json.dumps({'entryPoint': 'synthetic routing fixture',
+                              'backend': 'pywin32 DispatchEx' if native_com else 'fixture backend',
+                              'backendVersion': '312' if native_com else '1',
+                              'excelBuild': '16.0.20527.20194 x64' if native_com else 'fixture build',
+                              'qualification': 'test-only',
                               'evidenceClass': evidence_class,
-                              'authorization': 'test-only', 'operation': 'ordinary-formula-import',
-                              'profile': 'simple-xlsx', 'inputSha256': hashlib.sha256(original).hexdigest(),
+                               'authorization': 'test-only', 'operation': ('scoped-array-name-import' if scoped
+                                                                          else 'ordinary-formula-import'),
+                               'profile': 'scoped-array-xlsx' if scoped else 'simple-xlsx',
+                               'inputSha256': hashlib.sha256(original).hexdigest(),
                               'noOpSha256': hashlib.sha256(no_op).hexdigest(), 'commit': self.commit,
                               'output': 'result.xlsx'}).encode('utf-8')
         pin = hashlib.sha256(receipt).hexdigest()
@@ -244,6 +320,92 @@ class OnboardingTest(unittest.TestCase):
         self.assertEqual((self.store / 'sync.json').read_bytes(), before)
         self.assertEqual(self.book.read_bytes(), book)
         self.assertFalse((self.repo / 'result.xlsx').exists())
+
+    def test_scoped_export_lists_exact_a1_anchor_and_name_not_spill_children(self):
+        save_scoped_fixture(self.book)
+        self.export('scoped')
+        folder = self.store / 'review/scoped'
+        self.assertEqual(json.loads((folder / 'dynamic-arrays.json').read_bytes())['cells'], [
+            {'sheet': 'Model', 'cell': 'D2', 'spill': 'D2:D3', 'dialect': 'Formula2',
+             'kind': 'dynamic-array-anchor', 'formula': '=_xlfn.SEQUENCE(2,1,1)'}])
+        self.assertEqual(json.loads((folder / 'scoped-names.json').read_bytes())['names'], [
+            {'scope': 'Model', 'name': 'Input', 'refersTo': '=Model!$B$1'}])
+        inventory = json.loads((folder / 'inventory.json').read_bytes())['sheets'][0]
+        self.assertEqual(inventory['excludedByKind'], {'array': 1, 'dataTable': 1})
+        self.assertEqual(inventory['calculatedColumnTemplates'], 1)
+        save_scoped_fixture(self.book, dynamic=False)
+        self.export('not-dynamic')
+        self.assertFalse((self.store / 'review/not-dynamic/dynamic-arrays.json').exists())
+
+    def test_scoped_pair_round_trip_checks_spill_and_rejects_moved_rows(self):
+        (self.repo / '.gitignore').write_text('*.xlsx\n', encoding='utf-8')
+        save_scoped_fixture(self.book)
+        self.export('baseline')
+        self.publish('baseline')
+        self.cli('accept-initial', 'baseline', '--reviewed', self.preview_digest('baseline'))
+        for filename, collection, field, value in (
+            ('dynamic-arrays.json', 'cells', 'formula', '=_xlfn.SEQUENCE(2,1,10)'),
+            ('scoped-names.json', 'names', 'refersTo', '=Model!$C$1'),
+        ):
+            path = self.repo / 'baseline' / filename
+            proposal = json.loads(path.read_bytes())
+            proposal[collection][0][field] = value
+            path.write_text(json.dumps(proposal), encoding='utf-8')
+        subprocess.run(['git', 'add', 'baseline'], cwd=self.repo, check=True)
+        subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
+                        'commit', '-qm', 'Approve scoped pair'], cwd=self.repo, check=True)
+        self.commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True).strip()
+        args = ['baseline', 'result.xlsx', '--commit', self.commit]
+        original = self.book.read_bytes()
+        sync = (self.store / 'sync.json').read_bytes()
+        result = self.repo / 'result.xlsx'
+        self.assertIn('Route receipt does not match', self.cli('plan-import', *args, *self.simulated_route(), ok=False))
+        save_scoped_fixture(self.book, moved=True)
+        moved = json.loads(self.cli('plan-import', *args, *self.simulated_route(scoped=True), ok=False))
+        self.assertIn('Unsafe address drift', ' '.join(moved['blockers']))
+        self.assertIn('D2', json.dumps(moved['workbookScopedDiff']))
+        self.assertFalse(result.exists())
+        save_scoped_fixture(self.book, constant=8)
+        drift = json.loads(self.cli('plan-import', *args, ok=False))
+        self.assertIn('Unsafe address drift', ' '.join(drift['blockers']))
+        self.assertFalse(any(drift['workbookScopedDiff'].values()))
+        self.book.write_bytes(original)
+        xlrd = ' xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata"'
+        save_scoped_fixture(result, document_id='2', metadata_namespace=xlrd)
+        self.assertIn('Qualified no-op save does not preserve', self.cli(
+            'plan-import', *args, *self.simulated_route(scoped=True, native_com=True, no_op=result.read_bytes()), ok=False))
+        result.unlink()
+        args += self.simulated_route(scoped=True, native_com=True)
+        plan = json.loads(self.cli('plan-import', *args))
+        self.assertEqual(plan['gitScopedDiff']['dynamic-arrays.json'][0]['after']['spill'], 'D2:D3')
+        self.assertEqual(plan['gitScopedDiff']['scoped-names.json'][0]['after']['scope'], 'Model')
+        args += ['--approved-plan', plan['planSha256']]
+        self.cli('prepare-import', *args)
+        self.assertEqual(result.read_bytes(), original)
+
+        def verify(*, ok=True, readback='[[10],[11]]'):
+            digest = hashlib.sha256(result.read_bytes()).hexdigest()
+            return self.cli('verify-import', *args, '--saved', digest, '--reopened', digest,
+                            '--result', readback, ok=ok)
+
+        save_scoped_fixture(result, start=10, named='$C$1', spill=12)
+        self.assertIn('spill readback', verify(ok=False))
+        self.assertIn('does not match the approved SEQUENCE', verify(ok=False, readback='[[10],[12]]'))
+        save_scoped_fixture(result, start=10, named='$C$1', constant=8)
+        self.assertIn('preservation requirements', verify(ok=False))
+        save_scoped_fixture(result, start=10, named='$C$1', dynamic=False)
+        self.assertIn('preservation requirements', verify(ok=False))
+        save_scoped_fixture(result, start=10, named='$C$1', global_name='$B$1', table_formula='1+2')
+        self.assertIn('preservation requirements', verify(ok=False))
+        save_scoped_fixture(result, start=10, named='$C$1', document_id='2', metadata_namespace=xlrd)
+        self.assertIn('Verified readback and re-export', verify())
+        for changes in ({'revision': 1}, {'document_id': None}, {'metadata_namespace': xlrd + ' xmlns:other="urn:other"'},
+                        {'metadata_content': '<xlrd:payload/>'}):
+            metadata_options = {'document_id': '2', 'metadata_namespace': xlrd} | changes
+            save_scoped_fixture(result, start=10, named='$C$1', **metadata_options)
+            self.assertIn('preservation requirements', verify(ok=False))
+        self.assertEqual(self.book.read_bytes(), original)
+        self.assertEqual((self.store / 'sync.json').read_bytes(), sync)
 
     def test_import_reports_both_diffs_and_rejects_failed_no_op(self):
         args = self.import_fixture()
@@ -308,7 +470,7 @@ class OnboardingTest(unittest.TestCase):
 
     def cli(self, *args, ok=True, watch_neighbor=False):
         entry = [__file__, '--watch-neighbor'] if watch_neighbor else [str(SCRIPT)]
-        result = subprocess.run([sys.executable, '-X', 'utf8', *entry, *args, '--store', str(self.store)],
+        result = subprocess.run([sys.executable, '-B', '-X', 'utf8', *entry, *args, '--store', str(self.store)],
                                 cwd=self.repo, capture_output=True, encoding='utf-8')
         if ok:
             self.assertEqual(result.returncode, 0, f'{args!r}: {result.stderr}')
