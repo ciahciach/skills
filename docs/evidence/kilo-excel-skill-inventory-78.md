@@ -1,6 +1,6 @@
 # Inwentaryzacja skilli Kilo i Excel (#78)
 
-Stan z 25.11.2026 dla [#78](https://github.com/ciahciach/skills/issues/78): propozycja do akceptacji przed wyborem zakresu tłumaczenia. Nie zmienia skilli, instalacji, komend ani ustawień Kilo.
+Stan początkowy z 25.11.2026 dla [#78](https://github.com/ciahciach/skills/issues/78). Tabela zachowuje stan sprzed zmian profilu. Obowiązujący zakres po decyzji użytkownika jest na końcu raportu.
 
 ## Wniosek
 
@@ -104,6 +104,8 @@ Tabela obejmuje 66 pozycji widocznych w sesji `ses_ded4ee0c0ffec7MVZldix6wnBI`: 
 | `writing-shape` | 23 | 1441 | Poza | Redakcja artykułu, nie specyfikacja operacji Excel ani proces Kilo. |
 | `xlsx`* | 239 | 2173 | Jawnie | Recepta dla pracy z plikiem tabelarycznym po decyzji routera, nie dla samego opisu formuły. |
 
-## Zakres tłumaczenia do akceptacji
+## Decyzja użytkownika
 
-Proponowana pierwsza kolejność dla **skilli z tego repo**: `excel-router`, `excel-com-safe`, `setup-excel-repo`, `co-dalej`, `code-review`, `diagnosing-bugs`, `implement`, `implement-spec`, `kilo-handoff`, `spawn`, `tdd`, `wayfinder`, `writing-for-agents`. Obejmuje wejście do Excela, bezpieczną ścieżkę COM, zakładanie repo Excel i przepływ Kilo od zgłoszenia do weryfikacji. Dalsze pozycje `Zwykła` i `Jawnie` pozostają do decyzji, nie są automatycznie wyłączone ani włączone do tłumaczenia. Skille spoza checkoutu wymagają osobnego ustalenia źródła. Po akceptacji zapisać listę w #78; dopiero osobne zadanie może zmienić konfigurację lub treść skilli.
+- Wyłączyć dla agenta w osobistym profilu Kilo (`permission.skill: deny`): `implement-wave`, `claude-handoff`, `git-guardrails-claude-code`, `granica`, `migrate-to-shoehorn`, `powerbi-mcp`, `setup-ts-deep-modules`. Katalog ręcznych komend Kilo 7.8.32 nadal je pokazuje. Zachowano pliki skilli i ustawienia serwera MCP Power BI.
+- Ustawić `/handoff` w tym profilu jako wejście do `kilo-handoff`, bez zmiany jego kontroli zgody i przekazywania zapisu. Przenośny dokument zachować jako `/handoff:skill` przy kolizji nazw w Kilo.
+- Nie tłumaczyć skilli. Zastąpić jedynie wymagania prostego angielskiego prostym polskim w odpowiedziach `wait-what` i raporcie `improve-codebase-architecture`, zachowując słownictwo techniczne i słownik projektu.

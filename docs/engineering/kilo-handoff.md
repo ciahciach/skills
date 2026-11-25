@@ -4,7 +4,7 @@
 
 ## When to reach for it
 
-Type `/kilo-handoff`, or explicitly ask to continue the same assignment in a fresh Kilo session; the agent can reach for the skill when that request fits. It will not start a session just because you ask for a summary.
+Type `/kilo-handoff` (or `/handoff` in a Kilo profile that defines that alias), or explicitly ask to continue the same assignment in a fresh Kilo session. It will not start a session just because you ask for a summary.
 
 | Your situation | What to use |
 | --- | --- |
