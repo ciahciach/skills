@@ -106,6 +106,6 @@ Tabela obejmuje 66 pozycji widocznych w sesji `ses_ded4ee0c0ffec7MVZldix6wnBI`: 
 
 ## Decyzja użytkownika
 
-- Wyłączyć dla agenta w osobistym profilu Kilo (`permission.skill: deny`): `implement-wave`, `claude-handoff`, `git-guardrails-claude-code`, `granica`, `migrate-to-shoehorn`, `powerbi-mcp`, `setup-ts-deep-modules`. Katalog ręcznych komend Kilo 7.8.32 nadal je pokazuje. Zachowano pliki skilli i ustawienia serwera MCP Power BI.
-- Ustawić `/handoff` w tym profilu jako wejście do `kilo-handoff`, bez zmiany jego kontroli zgody i przekazywania zapisu. Przenośny dokument zachować jako `/handoff:skill` przy kolizji nazw w Kilo.
+- Wyłączyć dla agenta w tym repo ([`.kilo/kilo.json`](../../.kilo/kilo.json)): `implement-wave`, `claude-handoff`, `git-guardrails-claude-code`, `granica`, `migrate-to-shoehorn`, `powerbi-mcp`, `setup-ts-deep-modules`. Katalog ręcznych komend Kilo 7.8.32 nadal je pokazuje. Zachowano pliki skilli i ustawienia serwera MCP Power BI. `npx skills add` instaluje skille, nie tę konfigurację repo; poza tym repo przy instalacji należy pominąć niechciane skille w wyborze.
+- `/handoff` w Kilo kieruje kontynuację w tym samym checkoutcie do `kilo-handoff` przez regułę w samym `SKILL.md`, nie przez globalny alias. Skrócony kontekst trafia do promptu następcy; zgoda i przekazanie zapisu pozostają osobnymi krokami. `/handoff --portable` zachowuje opcję dokumentu.
 - Nie tłumaczyć skilli. Zastąpić jedynie wymagania prostego angielskiego prostym polskim w odpowiedziach `wait-what` i raporcie `improve-codebase-architecture`, zachowując słownictwo techniczne i słownik projektu.

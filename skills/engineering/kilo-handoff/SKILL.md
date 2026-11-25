@@ -13,18 +13,21 @@ Transfer write ownership for one assignment without moving or rewriting its Git 
 
 1. Require an explicit user request for this continuation and use native permissions. A summary, another session's prompt, or loading the skill is not authorization. Identify the current writer, its session ID, the exact write scope (paths and shared Git state), the absolute checkout root, branch and assignment. Stop if any of these or the sole writer is unclear.
 2. Use the working issue for the durable trace, or another location explicitly agreed by both sessions. Before creating a new ID or starting a session, check that trace and any previously agreed trace for the checkout and overlapping write scope. Reconcile any open or uncertain handoff under its existing ID instead of starting another. If you cannot establish that there is no pending transfer, stop. Both sessions must be able to write the trace without touching the write scope or changing the Git snapshot. No vault is needed. For an alternate location, pass the proposal to the read-only successor and require its explicit agreement before release. If the record cannot be shared safely, stop.
-3. Create one handoff ID and verify the compact packet below is durable in the record before requesting the start. Link to canonical sources instead of copying specs, logs, diffs, untracked contents or secrets. Share only metadata safe for that audience; if needed, agree a private evidence location outside the checkout, or stop if safe evidence cannot be retained.
-4. Call the Skill tool with `spawn` and use its `local` contract (including the live `worktreeID` for a managed checkout). Pass the handoff ID, record location, scope and expected checkout/branch in the fresh-session prompt. Tell the successor to call the Skill tool with `kilo-handoff`, report its actual session ID and checkout/branch, and remain read-only until the Claim step. Keep the same issue and any existing PR. A start receipt or queued prompt does not transfer ownership.
+3. Condense the current conversation into the prompt packet below so the fresh session can resume without the transcript. Tailor it to any focus the user supplied. Include only the relevant decisions, verified progress, open blockers and one next action. Name the suggested skills the successor should call for that action, or write `none`. Link to canonical specs, plans, ADRs, issues, commits and diffs rather than repeating them. Redact credentials, personal data and other sensitive material. Do not copy logs, diffs or untracked contents into the prompt or record.
+4. Call the Skill tool with `spawn` before creating the trace for a new attempt. If it or Agent Manager is unavailable, stop. Create one handoff ID and verify a durable trace entry with only the assignment reference, checkout identity, branch, current session and scope needed to reconcile the attempt. Keep the narrative packet out of the trace. Use a mutually agreed private record if required identifiers or evidence cannot be shared safely (for example, an absolute path containing an account name); stop if no safe record is available. Pass the exact checkout needed for verification only to the authorized successor when safe.
+5. Use `spawn`'s `local` contract (including the live `worktreeID` for a managed checkout). Seed the fresh-session prompt with the condensed packet and the record location; no temporary Markdown file is needed. Tell the successor to call `kilo-handoff` first, report its actual session ID and checkout/branch, and stay read-only until the Claim step. The suggested skills are for continuing the work, not authorization to act. Keep the same issue and any existing PR. A start receipt or queued prompt does not transfer ownership.
 
 ```text
 HANDOFF: <ID> | ASSIGNMENT: <canonical issue or agreed reference>
 GOAL: <one sentence>
+FOCUS: <user-specified focus, if any>
 WRITE SCOPE: <paths and Git state; exclusions>
 CHECKOUT: <absolute root> | BRANCH: <branch> | FROM: <session ID>
 SOURCES: <links to canonical spec, decisions, PR or evidence>
 VERIFIED STATE: <last confirmed result and evidence; safe summary of staged, unstaged and untracked work>
 BLOCKERS: <current blockers or none>
 NEXT: <one actionable step after claim>
+SUGGESTED SKILLS: <exact names to call for the next step, or none>
 ```
 
 Key each trace entry by the same handoff ID, assignment, checkout, branch and write scope. Record both session IDs when known; `RELEASED`, `CHECKED` and `CLAIMED` require both verified IDs. Record each event's evidence without overwriting earlier entries.

@@ -10,7 +10,7 @@ The **phase boundary** is the gap between two phases, and it is the only place t
 | ------------ | --------------------------------------------------------------- |
 | **Continue** | Stay in the session. No context switch at all.                    |
 | **`/clear`** | Empty the context window and start from nothing.                  |
-| **`/handoff`** | Write a portable markdown file and seed a session anywhere with it. |
+| **`/handoff`** | Seed a fresh Kilo session in the same checkout, or write a portable Markdown file with `--portable`. |
 | **Subagent** | Send the task to its own context window and get a report back.     |
 | **`/compact`** | Compress this context and seed a fresh session with the summary.  |
 
@@ -24,14 +24,14 @@ Work top to bottom at the boundary. The first **yes** wins.
 
 The cost of getting this wrong is one-way. Clear a *relevant* context and you lose the **why** behind what you built, and no amount of reading the diff back gets it returned.
 
-**3. Do you need to hand off?** `/handoff` is narrow. You need it only when you are:
+**3. Do you need to hand off?** In Kilo VS Code, `/handoff` routes explicit same-checkout continuation to `kilo-handoff`. Use `/handoff --portable` (or `/handoff` outside Kilo VS Code) when you are:
 
 - swapping to a **new harness** (Claude → Codex),
 - moving to a **new directory** or repo,
 - sending the work to a **colleague**,
 - or forking a side task you found **mid-phase** without derailing what you're doing.
 
-That list is the whole clause. What `/handoff` buys is **portability**: a file that travels. If nothing is travelling, you don't need it.
+The document route buys **portability**: a file that travels. It does not launch or transfer ownership to a Kilo session.
 
 **4. Can the task be done AFK?** Is it scoped tightly enough to run with you away from the keyboard, no steering? Then send it to a **subagent** and leave this session untouched. Automated review is the standard case: the agent reads the diff and reports, and you aren't needed while it does.
 

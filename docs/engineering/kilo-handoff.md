@@ -4,17 +4,21 @@
 
 ## When to reach for it
 
-Type `/kilo-handoff` (or `/handoff` in a Kilo profile that defines that alias), or explicitly ask to continue the same assignment in a fresh Kilo session. It will not start a session just because you ask for a summary.
+Type `/handoff` or `/kilo-handoff` in Kilo VS Code, or explicitly ask to continue the same assignment in a fresh session. No custom command in the user's Kilo profile is needed. A summary-only request does not start a session.
+
+The new session receives a focused summary in its starting prompt: goal, user-specified focus, verified state, blockers, next action and suggested skills. Existing artifacts are linked and sensitive data is redacted. The issue or agreed record keeps the write-transfer trace; there is no portable Markdown file to locate or forward.
 
 | Your situation | What to use |
 | --- | --- |
 | Same assignment, same checkout, new writer | `kilo-handoff` |
 | A separate assignment that needs its own worktree | [spawn](https://aihero.dev/skills-spawn) |
-| A portable briefing for a colleague, a different checkout or another tool | [handoff](https://aihero.dev/skills-handoff) |
+| A portable briefing for a colleague, a different checkout or another tool | [`/handoff --portable`](../productivity/handoff.md) |
 
 ## Prerequisites
 
-Use Kilo VS Code with Agent Manager and a Git checkout. Give the agent explicit permission to continue the assignment in a fresh session. Both sessions need access to the working issue or another agreed place for the transfer record that does not change the files or Git state being handed over. No vault is required.
+Use Kilo VS Code with Agent Manager and a Git checkout. For `/handoff`, install `handoff`, `kilo-handoff` and `spawn`; `/kilo-handoff` needs only the latter two. For a selective installation, run `npx skills@latest add ciahciach/skills --agent kilo --skill handoff kilo-handoff spawn` (add `--global` for a user-level install).
+
+Give the agent explicit permission to continue the assignment in a fresh session. Both sessions need access to the working issue or another agreed place for the transfer record that does not change the files or Git state being handed over. Keep the record limited to the identifiers and evidence needed to reconcile the transfer. No vault is required.
 
 ## Common questions
 

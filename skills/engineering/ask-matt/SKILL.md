@@ -74,7 +74,7 @@ A **phase** is a chunk of work inside a session: the grilling, the implementatio
 
 - **Continue**: stay put. Costs nothing, loses nothing.
 - **`/clear`**: empty the window, when nothing here matters to what's next.
-- The **`handoff` skill** writes a portable markdown file for a **new harness**, a **new directory**, a **colleague**, or a side task **mid-phase**. Use `/handoff:skill` if Kilo has a custom `/handoff` command; otherwise use `/handoff`.
+- **`/handoff --portable`** writes a portable markdown file for a **new harness**, a **new directory**, a **colleague**, or a side task **mid-phase**. Outside Kilo VS Code, `/handoff` uses this route by default.
 - **Subagent**: send a tightly-scoped task to its own window and get a report back.
 - **`/compact`** compresses this context and seeds a fresh session with it. The **default**, at the bottom of the tree rather than the first reach.
 
@@ -88,7 +88,7 @@ stan tej sesji i mówi, co wpisać.
 
 Off the main flow entirely.
 
-- **`/kilo-handoff`** (also `/handoff` in a Kilo profile with that alias): on explicit request, continue the same assignment in a fresh Kilo VS Code session in the same checkout. Use it when the new session must take over writes, not just receive a briefing. It uses `spawn` for startup and records release, verification of local Git changes, and claim before the successor writes.
+- **`/handoff`** in Kilo VS Code routes same-checkout continuation to **`/kilo-handoff`**. On explicit request it seeds a fresh session with the condensed context, then records release, verification of local Git changes, and claim before the successor writes.
 - **`/spawn`**: start an explicitly requested Kilo VS Code Agent Manager session without transferring write ownership. Use `local` for a fresh session in the same checkout and `worktree` for isolation on an agreed base. `spawn` reconciles uncertain starts, but does not schedule an issue graph. Internal subagents are not Agent Manager sessions.
 
 - **`/grill-me`**: the same relentless interview as `/grill-with-docs`, but **stateless**: it saves nothing locally and builds no `GLOSSARY.md`. Reach for it when you are **not working in a working directory** (sharpening a plan, a design, a piece of writing, anything with no repo under it). If you are in a working directory, use `/grill-with-docs` instead: it runs the same interview and leaves a paper trail, so it is strictly the better one.

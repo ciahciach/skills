@@ -1,12 +1,12 @@
 ## What it does
 
-`handoff` compacts the conversation you are in into a **handoff document**: one markdown file, written to your OS's temporary directory rather than into the workspace, that a fresh [agent](https://www.aihero.dev/ai-coding-dictionary/agent) can read to pick the work up.
+`handoff` condenses the conversation so a fresh [agent](https://www.aihero.dev/ai-coding-dictionary/agent) can pick up the work. In Kilo VS Code it routes same-checkout continuation to [`kilo-handoff`](../engineering/kilo-handoff.md). The portable route writes one Markdown file to your OS's temporary directory rather than into the workspace. The rest of this page describes that route.
 
 What it gives you is **portability**, not compression, so the skill is narrower than it sounds. You need a file only when the work has to *travel*: to a new [harness](https://www.aihero.dev/ai-coding-dictionary/harness), a new directory, a colleague, or a side task you want to fork off. If nothing is travelling, you do not need a handoff. Staying in the [session](https://www.aihero.dev/ai-coding-dictionary/session), `/clear`, a [subagent](https://www.aihero.dev/ai-coding-dictionary/subagent) and `/compact` cover the ordinary end-of-phase case, and `/compact` covers it more often than this skill does.
 
 ## When to reach for it
 
-Invoke the skill by typing `/handoff`, or `/handoff:skill` in Kilo if `/handoff` is a custom command for `kilo-handoff`. Pass a note about what the next session is for, and the skill writes the document for that purpose.
+For the document, type `/handoff --portable` in Kilo VS Code or `/handoff` elsewhere. Pass a note about what the next session is for and the skill tailors the document to that purpose.
 
 There are four triggers, and only four:
 
