@@ -871,7 +871,7 @@ def validate_scoped_pair(diffs):
 
 
 def preservation(data, parts, change=None, *, data_only=False, verified_result=None, com_fixture_edit=False,
-                 scoped=False, scoped_pair=None):
+                 scoped=False, scoped_pair=None, scoped_com_edit=False):
     """Conservative package comparison for simple XLSX; return hashes, never values."""
     allowed = re.compile(r'(?:\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app|custom)\.xml|'
                          r'xl/(?:_rels/workbook\.xml\.rels|workbook\.xml|styles\.xml|sharedStrings\.xml|calcChain\.xml|'
@@ -914,10 +914,30 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
                 raise Blocked('Only static worksheet tables may be preserved in a scoped import.')
             for extension_list in xml.iter(f'{S}extLst'):
                 calc = '{http://schemas.microsoft.com/office/spreadsheetml/2018/calcfeatures}'
-                if part == 'xl/workbook.xml' and extension_list in xml and all(
-                        node.tag in {f'{S}extLst', f'{S}ext', calc + 'calcFeatures', calc + 'feature'}
-                        for node in extension_list.iter()):
-                    continue
+                if part == 'xl/workbook.xml' and extension_list in xml:
+                    native_properties = {
+                        '{140A7094-0E35-4892-8432-C4D2E57EDEB5}': (
+                            '{http://schemas.microsoft.com/office/spreadsheetml/2010/11/main}workbookPr',
+                            'chartTrackingRefBase', r'0|1|true|false'),
+                        '{D14903EA-33C4-47F7-8F05-3474C54BE107}': (
+                            '{http://schemas.microsoft.com/office/spreadsheetml/2024/workbookCompatibilityVersion}version',
+                            'setVersion', r'[0-9]{1,10}'),
+                    }
+                    for ext in extension_list:
+                        if all(node.tag in {f'{S}ext', calc + 'calcFeatures', calc + 'feature'}
+                               for node in ext.iter()):
+                            continue
+                        property_spec = native_properties.get(ext.get('uri', '')) if scoped else None
+                        if property_spec and ext.tag == f'{S}ext' and ext.attrib.keys() == {'uri'} and len(ext) == 1:
+                            tag, attribute, pattern = property_spec
+                            prop = ext[0]
+                            if (prop.tag == tag and prop.attrib.keys() == {attribute} and not len(prop)
+                                    and re.fullmatch(pattern, prop.attrib[attribute])
+                                    and not any((text or '').strip() for text in (ext.text, prop.text, prop.tail))):
+                                continue  # Still included in the preservation hash.
+                        break
+                    else:
+                        continue
                 if (part == 'xl/styles.xml' and xml.tag == f'{S}styleSheet' and extension_list in xml
                         and len(xml.findall(f'{S}extLst')) == 1 and not extension_list.attrib and len(extension_list) == 2
                         and all(not (node.text or '').strip() and not (node.tail or '').strip()
@@ -938,6 +958,10 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
                 hashes[part] = sha(raw)
                 continue
             if scoped and part == 'xl/workbook.xml':
+                if scoped_com_edit and scoped_pair:
+                    pointers = xml.findall('{http://schemas.microsoft.com/office/spreadsheetml/2014/revision}revisionPtr')
+                    if len(pointers) == 1 and pointers[0].get('documentId', '').strip():
+                        pointers[0].set('documentId', '')
                 sheets = [node.attrib['name'] for node in xml.findall(f'{S}sheets/{S}sheet')]
                 for node in xml.findall(f'{S}definedNames/{S}definedName'):
                     if (not node.text or not (any(scoped_reference('=' + node.text, sheet) for sheet in parts)
@@ -1029,6 +1053,31 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
     if area and (matched_name != 1 or len(slots) != (area[2] - area[0] + 1) * (area[3] - area[1] + 1)):
         raise Blocked('Approved scope or complete spill footprint not found.')
     return hashes
+
+
+def scoped_preserves_edit(current, saved, parts, pair, matrix, *, com_edit=False):
+    before = preservation(current, parts, scoped=True, scoped_pair=pair, scoped_com_edit=com_edit)
+    after = preservation(saved, parts, scoped=True, scoped_pair=pair, verified_result=matrix,
+                         scoped_com_edit=com_edit)
+    metadata = 'xl/metadata.xml'
+    if com_edit and metadata in before and metadata in after and before[metadata] != after[metadata]:
+        with ZipFile(BytesIO(saved)) as book:
+            raw = book.read(metadata)
+        # Permit only an added, unused root binding, not its removal or changes to metadata records.
+        if raw.count(b'xlrd') == 1 and b'&#' not in raw:
+            normalized, count = re.subn(
+                rb'\A((?:<\?xml[^?]*\?>\s*)?<metadata\b[^<>]*?)'
+                rb' xmlns:xlrd="http://schemas\.microsoft\.com/office/spreadsheetml/2017/richdata"(?=[\s>])',
+                rb'\1', raw, count=1)
+            if count and sha(normalized) == before[metadata]:
+                namespaces = ET.iterparse(BytesIO(raw), events=('start-ns', 'start'))
+                for event, node in namespaces:
+                    if event == 'start':
+                        break
+                    if node == ('xlrd', 'http://schemas.microsoft.com/office/spreadsheetml/2017/richdata'):
+                        after[metadata] = before[metadata]
+                        break
+    return before == after
 
 
 def committed_artifact(root, oid, path):
@@ -1156,8 +1205,11 @@ def import_plan(root, store, args):
                 raise Blocked('Qualified no-op save does not preserve workbook contents.')
             plan.update({key: route[key] for key in fields[:4]})
             plan.update(routeSha256=pin, noOpSha256=sha(no_op), preservation='verified no-op')
-            if (not scoped and route['qualification'] == COM_QUALIFICATION and route['backend'] == 'pywin32 DispatchEx'
-                    and route['backendVersion'] == '312' and route['excelBuild'] == '16.0.20527.20194 x64'
+            native_com = (route['backend'] == 'pywin32 DispatchEx' and route['backendVersion'] == '312'
+                          and route['excelBuild'] == '16.0.20527.20194 x64')
+            if scoped and native_com:
+                plan['copyMetadataPolicy'] = 'scoped-com-edit'
+            elif (not scoped and native_com and route['qualification'] == COM_QUALIFICATION
                     and change == COM_FIXTURE_EDIT and parts == {'Calc': 'xl/worksheets/sheet1.xml'}
                     and live == {('Calc', 'B1'): '=A1*2', ('Calc', 'C1'): '=A1+1'}):
                 plan['copyMetadataPolicy'] = 'qualified-com-fixture'
@@ -1207,8 +1259,8 @@ def controlled_import(root, store, args):
         scoped_matches = all(scoped_diff(scoped_map(key, current_export.get(key)), scoped_map(key, exported.get(key)),
                                          omissions=True) == scoped_diffs[key] for key in SCOPED_ARTIFACTS)
         matches = (scoped_matches and formulas == original and result_parts == parts
-                   and preservation(saved, result_parts, scoped=True, scoped_pair=pair, verified_result=matrix)
-                   == preservation(current, parts, scoped=True, scoped_pair=pair))
+                   and scoped_preserves_edit(current, saved, parts, pair, matrix,
+                                             com_edit=plan.get('copyMetadataPolicy') == 'scoped-com-edit'))
     else:
         try:
             verified_result = Decimal(args.result)

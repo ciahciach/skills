@@ -23,6 +23,31 @@ PACKAGE = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
 
 class NativePilotTest(unittest.TestCase):
+    def test_scoped_preservation_accounts_for_native_workbook_properties(self):
+        cli = runpy.run_path(str(SCRIPT))
+        workbook = (f'<workbook xmlns="{SHEET}"><extLst>'
+                    '<ext uri="{140A7094-0E35-4892-8432-C4D2E57EDEB5}">'
+                    '<workbookPr xmlns="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" '
+                    'chartTrackingRefBase="1"/></ext>'
+                    '<ext uri="{D14903EA-33C4-47F7-8F05-3474C54BE107}">'
+                    '<version xmlns="http://schemas.microsoft.com/office/spreadsheetml/2024/workbookCompatibilityVersion" '
+                    'setVersion="1"/></ext></extLst></workbook>')
+
+        def preserved(raw, *, scoped=True):
+            data = BytesIO()
+            with ZipFile(data, 'w') as book:
+                book.writestr('xl/workbook.xml', raw)
+            return cli['preservation'](data.getvalue(), {}, scoped=scoped)
+
+        self.assertNotEqual(preserved(workbook), preserved(workbook.replace('setVersion="1"', 'setVersion="2"')))
+        with self.assertRaisesRegex(cli['Blocked'], 'unsupported extensions'):
+            preserved(workbook, scoped=False)
+        for changed in (workbook.replace('setVersion="1"', 'setVersion="1" unexpected="0"'),
+                        workbook.replace('setVersion="1"/>', 'setVersion="1"><payload/></version>'),
+                        workbook.replace('{D14903EA-33C4-47F7-8F05-3474C54BE107}', '{unknown}')):
+            with self.assertRaisesRegex(cli['Blocked'], 'unsupported extensions'):
+                preserved(changed)
+
     def test_formula_import_preserves_only_empty_desktop_style_defaults(self):
         cli = runpy.run_path(str(SCRIPT))
         styles = (f'<styleSheet xmlns="{SHEET}"><extLst>'
@@ -168,13 +193,19 @@ def save_fixture(path, expression, *, macros=False, missing_vba=False, data=7, s
 
 
 def save_scoped_fixture(path, *, start=1, named='$B$1', constant=7, spill=None, moved=False, dynamic=True,
-                        global_name='$C$1', table_formula='1+1'):
+                        global_name='$C$1', table_formula='1+1', revision=0, document_id='1',
+                        metadata_namespace='', metadata_content=''):
     source = BytesIO()
     save_fixture(source, '2+2', simple=True, data=constant)
     with ZipFile(source) as original, ZipFile(path, 'w') as book:
         for part in original.namelist():
             xml = original.read(part).decode()
             if part == 'xl/workbook.xml':
+                if document_id:
+                    guid = f'{document_id * 8}-{document_id * 4}-{document_id * 4}-{document_id * 4}-{document_id * 12}'
+                    xml = xml.replace('</workbook>', '<xr:revisionPtr xmlns:xr="http://schemas.microsoft.com/office/'
+                                      f'spreadsheetml/2014/revision" revIDLastSave="{revision}" '
+                                      f'documentId="13_ncr:1_{{{guid}}}"/></workbook>')
                 xml = xml.replace('</workbook>', '<definedNames><definedName name="Input" localSheetId="0">'
                                   f'Model!{named}</definedName><definedName name="Input">Model!{global_name}</definedName>'
                                   '</definedNames></workbook>')
@@ -194,12 +225,12 @@ def save_scoped_fixture(path, *, start=1, named='$B$1', constant=7, spill=None, 
                                   '</c><c r="E6"><f t="dataTable" ref="E6:E7"/></c></row></sheetData>'
                                   '<tableParts count="1"><tablePart r:id="table"/></tableParts>')
             book.writestr(part, xml)
-        book.writestr('xl/metadata.xml', f'<metadata xmlns="{SHEET}" xmlns:xda="http://schemas.microsoft.com/'
+        book.writestr('xl/metadata.xml', f'<metadata xmlns="{SHEET}"{metadata_namespace} xmlns:xda="http://schemas.microsoft.com/'
                       'office/spreadsheetml/2017/dynamicarray"><metadataTypes count="1"><metadataType name="XLDAPR" '
                       'cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst>'
                       f'<ext uri="{{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}}"><xda:dynamicArrayProperties '
                       f'fDynamic="{int(dynamic)}" fCollapsed="0"/></ext></extLst></bk></futureMetadata>'
-                      '<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>')
+                      f'<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata>{metadata_content}</metadata>')
         book.writestr('xl/worksheets/_rels/sheet1.xml.rels', f'<Relationships xmlns="{PACKAGE}">'
                       f'<Relationship Id="table" Type="{OFFICE}/table" Target="../tables/table1.xml"/></Relationships>')
         book.writestr('xl/tables/table1.xml', f'<table xmlns="{SHEET}" id="1" name="Table1" '
@@ -251,14 +282,17 @@ class OnboardingTest(unittest.TestCase):
         self.commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True).strip()
         return ['baseline', 'result.xlsx', '--commit', self.commit]
 
-    def simulated_route(self, *, no_op=None, evidence_class='desktop', scoped=False):
+    def simulated_route(self, *, no_op=None, evidence_class='desktop', scoped=False, native_com=False):
         # External desktop phases are simulated; this is not runtime qualification.
         routes = self.store / 'routes'
         routes.mkdir(mode=0o700, exist_ok=True)
         original = self.book.read_bytes()
         no_op = original if no_op is None else no_op
-        receipt = json.dumps({'entryPoint': 'synthetic routing fixture', 'backend': 'fixture backend',
-                              'backendVersion': '1', 'excelBuild': 'fixture build', 'qualification': 'test-only',
+        receipt = json.dumps({'entryPoint': 'synthetic routing fixture',
+                              'backend': 'pywin32 DispatchEx' if native_com else 'fixture backend',
+                              'backendVersion': '312' if native_com else '1',
+                              'excelBuild': '16.0.20527.20194 x64' if native_com else 'fixture build',
+                              'qualification': 'test-only',
                               'evidenceClass': evidence_class,
                                'authorization': 'test-only', 'operation': ('scoped-array-name-import' if scoped
                                                                           else 'ordinary-formula-import'),
@@ -334,7 +368,12 @@ class OnboardingTest(unittest.TestCase):
         self.assertIn('Unsafe address drift', ' '.join(drift['blockers']))
         self.assertFalse(any(drift['workbookScopedDiff'].values()))
         self.book.write_bytes(original)
-        args += self.simulated_route(scoped=True)
+        xlrd = ' xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata"'
+        save_scoped_fixture(result, document_id='2', metadata_namespace=xlrd)
+        self.assertIn('Qualified no-op save does not preserve', self.cli(
+            'plan-import', *args, *self.simulated_route(scoped=True, native_com=True, no_op=result.read_bytes()), ok=False))
+        result.unlink()
+        args += self.simulated_route(scoped=True, native_com=True)
         plan = json.loads(self.cli('plan-import', *args))
         self.assertEqual(plan['gitScopedDiff']['dynamic-arrays.json'][0]['after']['spill'], 'D2:D3')
         self.assertEqual(plan['gitScopedDiff']['scoped-names.json'][0]['after']['scope'], 'Model')
@@ -356,8 +395,13 @@ class OnboardingTest(unittest.TestCase):
         self.assertIn('preservation requirements', verify(ok=False))
         save_scoped_fixture(result, start=10, named='$C$1', global_name='$B$1', table_formula='1+2')
         self.assertIn('preservation requirements', verify(ok=False))
-        save_scoped_fixture(result, start=10, named='$C$1')
+        save_scoped_fixture(result, start=10, named='$C$1', document_id='2', metadata_namespace=xlrd)
         self.assertIn('Verified readback and re-export', verify())
+        for changes in ({'revision': 1}, {'document_id': None}, {'metadata_namespace': xlrd + ' xmlns:other="urn:other"'},
+                        {'metadata_content': '<xlrd:payload/>'}):
+            metadata_options = {'document_id': '2', 'metadata_namespace': xlrd} | changes
+            save_scoped_fixture(result, start=10, named='$C$1', **metadata_options)
+            self.assertIn('preservation requirements', verify(ok=False))
         self.assertEqual(self.book.read_bytes(), original)
         self.assertEqual((self.store / 'sync.json').read_bytes(), sync)
 
