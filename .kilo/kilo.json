@@ -1,0 +1,14 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "permission": {
+    "skill": {
+      "implement-wave": "deny",
+      "claude-handoff": "deny",
+      "git-guardrails-claude-code": "deny",
+      "granica": "deny",
+      "migrate-to-shoehorn": "deny",
+      "powerbi-mcp": "deny",
+      "setup-ts-deep-modules": "deny"
+    }
+  }
+}

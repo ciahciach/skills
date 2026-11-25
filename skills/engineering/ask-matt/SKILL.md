@@ -17,10 +17,10 @@ A **flow** is a path through the skills. Most paths run along one **main flow**,
 The route most work travels. You have an idea and want it built.
 
 1. **`/grill-with-docs`** sharpens the idea by interview. Start here whenever you are **working in a working directory**: it's stateful, retaining what it learns in `GLOSSARY.md` and ADRs. (No working directory? Use `/grill-me` instead, covered under Standalone. Both run the same `/grilling` primitive; `grill-with-docs` is the one that leaves a paper trail, which makes it the better of the two whenever a repo is there to leave it in.)
-2. **Branch: can you settle every question in conversation?** If a question needs a runnable answer (state, business logic, a UI you have to see), detour through a prototype, bridged by **`/handoff`** in both directions (a prototype lives in its own directory, which is exactly what `/handoff` is for; see Phase boundaries):
-   - **`/handoff`** out, then open a fresh session against that file,
+2. **Branch: can you settle every question in conversation?** If a question needs a runnable answer (state, business logic, a UI you have to see), detour through a prototype, bridged by the **portable `handoff` skill** in both directions because a prototype lives in its own directory (see Phase boundaries for the command):
+   - Hand off the context, then open a fresh session against that file,
    - **`/prototype`** to answer the question with throwaway code,
-   - **`/handoff`** back the [prototype result](../prototype/SKILL.md#hand-off-the-result), and reference it from the original idea thread.
+   - Hand off the [prototype result](../prototype/SKILL.md#hand-off-the-result) back, and reference it from the original idea thread.
 3. **Branch: is this a multi-session build?**
    - **Yes** → **`/to-spec`** (turn the thread into a spec), then **`/to-tickets`** to split it into tracer-bullet tickets, each declaring its **blocking edges**. Then work the tickets one of two ways:
      - **`/implement`** per ticket, **`/clear`ing context between each one**. On a local tracker that's one file per ticket under `.scratch/<feature>/issues/`, worked blockers-first by hand; on a real tracker the edges become native blocking links, so any ticket whose blockers are done can be grabbed. Each ticket is self-contained, so the last one's context is disposable.
@@ -74,7 +74,7 @@ A **phase** is a chunk of work inside a session: the grilling, the implementatio
 
 - **Continue**: stay put. Costs nothing, loses nothing.
 - **`/clear`**: empty the window, when nothing here matters to what's next.
-- **`/handoff`** writes a portable markdown file. Narrow: only for a **new harness**, a **new directory**, a **colleague**, or forking a side task **mid-phase**. What it buys is portability.
+- **`/handoff --portable`** writes a portable markdown file for a **new harness**, a **new directory**, a **colleague**, or a side task **mid-phase**. Outside Kilo VS Code, `/handoff` uses this route by default.
 - **Subagent**: send a tightly-scoped task to its own window and get a report back.
 - **`/compact`** compresses this context and seeds a fresh session with it. The **default**, at the bottom of the tree rather than the first reach.
 
@@ -88,7 +88,7 @@ stan tej sesji i mówi, co wpisać.
 
 Off the main flow entirely.
 
-- **`/kilo-handoff`**: on explicit request, continue the same assignment in a fresh Kilo VS Code session in the same checkout. Use it when the new session must take over writes, not just receive a briefing. It uses `spawn` for startup and records release, verification of local Git changes, and claim before the successor writes.
+- **`/handoff`** in Kilo VS Code routes same-checkout continuation to **`/kilo-handoff`**. On explicit request it seeds a fresh session with the condensed context, then records release, verification of local Git changes, and claim before the successor writes.
 - **`/spawn`**: start an explicitly requested Kilo VS Code Agent Manager session without transferring write ownership. Use `local` for a fresh session in the same checkout and `worktree` for isolation on an agreed base. `spawn` reconciles uncertain starts, but does not schedule an issue graph. Internal subagents are not Agent Manager sessions.
 
 - **`/grill-me`**: the same relentless interview as `/grill-with-docs`, but **stateless**: it saves nothing locally and builds no `GLOSSARY.md`. Reach for it when you are **not working in a working directory** (sharpening a plan, a design, a piece of writing, anything with no repo under it). If you are in a working directory, use `/grill-with-docs` instead: it runs the same interview and leaves a paper trail, so it is strictly the better one.
@@ -97,12 +97,12 @@ Off the main flow entirely.
 - **`/research`**: delegate reading legwork to a **background agent**: it investigates a question against **primary sources**, then leaves a cited Markdown file in the repo. Keep working while it reads. The file it produces is something to take *into* the main flow at `/grill-with-docs`, since research feeds the thinking rather than replacing it.
 - **`/to-questionnaire`** comes in when the thing blocking you isn't in your head or the codebase but in **someone else's**, and it writes them a questionnaire to fill in. It's the inverse of `/grill-me`: instead of interviewing you about the subject, it interviews you about the **send** (who it's going to, what you need back) and aims the questions at the gap. What comes back is material for `/grill-with-docs` or `/to-spec`.
 - **`/wizard`** is for the steps only a **human** can take: provisioning infrastructure, setting up credentials or CI secrets, clicking through an unfamiliar third-party dashboard, running a one-off migration or cutover. It generates an interactive bash script that opens each URL, captures each value, and writes it into `.env` and GitHub secrets, so the procedure stops being something you re-explain to an agent every time. Model-invoked, so the agent reaches for it the moment it hits a wall only you can pass. If the agent could just do it itself, it should; this is for where a human is genuinely in the loop.
-- **`/wait-what`** is the corrective for a message that didn't land. Use it mid-conversation, inside any other skill, and the agent re-pitches what it just said with the context you were missing, in plain English, using the `GLOSSARY.md` vocabulary. It works after the fact; `/grill-with-docs` is the upfront cure, because a shared language agreed early is what stops the jargon arriving at all.
+- **`/wait-what`** is the corrective for a message that didn't land. Use it mid-conversation, inside any other skill, and the agent re-pitches what it just said with the context you were missing, in plain Polish, using the `GLOSSARY.md` vocabulary. It works after the fact; `/grill-with-docs` is the upfront cure, because a shared language agreed early is what stops the jargon arriving at all.
 - **`/teach`**: learn a concept over multiple sessions, using the current directory as a stateful workspace.
 - **`/writing-for-agents`** is the reference for writing documents agents consume: skills, AGENTS.md, pointed-at docs.
 
 
-**Several independent tickets, and you want them done in one night** → `/implement-wave`: parallel subagents over disjoint file sets, parent commits per ticket.
+**Several independent tickets** → in Kilo VS Code, use `/implement-spec` for a tracked spec or `/implement` for one ticket at a time. On profiles that enable `/implement-wave`, it runs parallel subagents over disjoint file sets, with the parent committing per ticket.
 
 ## Precondition
 
