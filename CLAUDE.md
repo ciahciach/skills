@@ -34,6 +34,8 @@ Every skill that dispatches a subagent says to start it with a fresh context win
 
 Issues live in `ciahciach/skills`. See [GitHub issue tracker](./skills/engineering/setup-matt-pocock-skills/issue-tracker-github.md) for tracker and Wayfinding operations. Use `--repo ciahciach/skills` to target this fork explicitly.
 
+Gdy tworzysz PR realizujący bieżące zgłoszenie, domyślnie dodaj do opisu `Closes #<numer>`, żeby merge do domyślnej gałęzi zamknął zgłoszenie. Jeśli PR jest tylko etapem lub zgłoszenie ma pozostać otwarte, użyj `Refs #<numer>` i wskaż, co pozostaje do zrobienia. Ustal właściwe zgłoszenie przed dodaniem powiązania; nie zgaduj numeru ani nie zamykaj zgłoszenia przy otwarciu PR-a.
+
 ### Triage labels
 
 Canonical names, unchanged. See `docs/agents/triage-labels.md`. Issues are judged against [`SCOPE.md`](./SCOPE.md).
