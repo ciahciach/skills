@@ -455,6 +455,29 @@ class OnboardingTest(unittest.TestCase):
         self.assertEqual(book.read_bytes(), files['template.xlsm'])
         self.assertEqual((self.store / 'sync.json').read_bytes(), sync)
 
+    def test_vba_custom_properties_are_supported_but_not_normalized(self):
+        cli = runpy.run_path(str(SCRIPT))
+
+        def workbook(label):
+            data = BytesIO()
+            save_fixture(data, '2+2', macros=True, vba_hosts=True)
+            if label is not None:
+                with ZipFile(data, 'a') as book:
+                    book.writestr('docProps/custom.xml',
+                                  '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/'
+                                  'custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/'
+                                  '2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" '
+                                  f'pid="2" name="FixtureLabel"><vt:lpwstr>{label}</vt:lpwstr></property></Properties>')
+            return data.getvalue()
+
+        baseline = workbook('retained')
+        cli['vba_package'](baseline)
+        part = cli['VBA_PART']
+        expected = cli['preserved_parts'](baseline, part)
+        self.assertEqual(expected, cli['preserved_parts'](workbook('retained'), part))
+        for changed in (workbook('changed'), workbook(None)):
+            self.assertNotEqual(expected, cli['preserved_parts'](changed, part))
+
     def test_pinned_xlsm_is_copied_then_accepted_as_first_sync(self):
         pin, folder, files = self.pin_template()
         copy = self.repo / 'model.xlsm'

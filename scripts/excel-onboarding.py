@@ -1378,7 +1378,7 @@ VBA_PROFILE = 'restricted-xlsm'
 VBA_NAMES = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,30}')
 VBA_CONTROLS = dict.fromkeys(('macros', 'events', 'refresh', 'updateLinks', 'autoSave'), False)
 VBA_PACKAGE_PARTS = re.compile(
-    r'\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app)\.xml|'
+    r'\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app|custom)\.xml|'
     r'xl/(?:workbook\.xml|_rels/workbook\.xml\.rels|worksheets/sheet[0-9]+\.xml|'
     r'theme/theme[0-9]+\.xml|styles\.xml|sharedStrings\.xml|calcChain\.xml|vbaProject\.bin)'
 )
