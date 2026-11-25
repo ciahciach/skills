@@ -116,7 +116,3 @@ If prior triage notes exist on the issue or PR, read them, check whether the rep
 When the repo keeps an LLM wiki and grilling resolves domain terms or decisions, write them to
 `wiki/decisions/` (and `GLOSSARY.md` for terms) rather than `docs/adr/`, then link from the ticket.
 The ticket stays the work item; the wiki stays the knowledge.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

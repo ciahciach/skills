@@ -95,7 +95,3 @@ only a link in `wiki/index.md`, and **decisions recorded as ADRs live in `wiki/d
 `docs/adr/`. Read the wiki decision pages that touch the changed files before judging the diff: a
 review that contradicts a recorded decision is either a bug in the code or a decision that needs
 superseding, and the report should say which.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

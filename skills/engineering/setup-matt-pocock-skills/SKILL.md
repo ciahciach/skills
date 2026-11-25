@@ -220,10 +220,6 @@ If the user wants to version Excel logic or structure, or exploration found an E
 offer the optional `/setup-excel-repo` beta. If Excel intent is unknown, mention that the option
 also works before the first workbook. On explicit opt-in, give exactly one next step: run
 `/setup-excel-repo` themselves in this repo if available in their harness. This satisfies the
-next-step pointer below. On refusal, leave the Excel scaffold untouched. Matt's setup does not
+closing report. On refusal, leave the Excel scaffold untouched. Matt's setup does not
 invoke or install the beta, create or edit its scaffold, or onboard a workbook. The beta reuses
 the tracker and knowledge layout configured here.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

@@ -135,7 +135,3 @@ dwa podejścia, albo musisz oddać gałąź komuś innemu.
 Worktree nie rozwiązuje problemu z punktu 1 — rozwiązuje go tylko w środku fali, a przenosi na merge.
 Za to nie oddaje wyników do Twojej sesji: sesje Agent Managera są top-level, więc raport musisz
 wyciągnąć sam.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.

@@ -83,7 +83,3 @@ glossary from `wiki/index.md` so humans still find it.
 
 Mark facts on any page you write as USER_CONFIRMED, OBSERVED, INFERRED or PROPOSED, and move
 `last_verified` only after a real re-check against `verified_against_snapshot`.
-
-<!-- next-step-pointer -->
-> **Before you finish:** name the next step with the `co-dalej` skill (it reads the repo state
-> and picks one), or state it yourself in one line with the exact command.
