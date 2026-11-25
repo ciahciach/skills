@@ -16,6 +16,7 @@ _Avoid_: ticket i bilet (wyjątki to cytaty z innych systemów, które nazywają
 
 **Decision ticket**:
 Jednostka w `wayfinder`: potomny **Issue** elementu `wayfinder:map` zawierające *pytanie*, na które odpowiedzią jest decyzja, a nie fragment kodu do wykonania. To właśnie określenie **decyzja** odróżnia ten dokument od zgłoszenia dotyczącego wdrożenia; w `wayfinder` pojawia się najpierw ten termin, a następnie używa się słowa "ticket".
+_Avoid_: bilet
 
 **Triage role**:
 Standardowa etykieta state-machine przypisywana do **Issue** podczas triage (np. `needs-triage`, `ready-for-afk`). Każda rola jest powiązana z rzeczywistym ciągiem znaków etykiety w **Issue tracker** za pośrednictwem pliku `docs/agents/triage-labels.md`.
