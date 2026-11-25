@@ -18,7 +18,8 @@ Commit your work to the current branch.
 
 ## Wiki mode
 
-Read `docs/agents/domain.md` before the first slice: it names the tracker and, when present, the
-`## Wiki mode` section that moves interview ledgers to `wiki/processes/grill/` and ADRs to
+Read `docs/agents/domain.md` before the first slice if it exists. If it is absent, use the Issue
+tracker named by the repo instructions or the user. The `## Wiki mode` section, when present,
+moves interview ledgers to `wiki/processes/grill/` and ADRs to
 `wiki/decisions/`. Do not create `docs/adr/` in a wiki repo, and do not restate a decision that
 already has a page: link to it.

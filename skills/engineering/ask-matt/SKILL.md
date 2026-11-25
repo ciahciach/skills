@@ -88,6 +88,7 @@ stan tej sesji i mówi, co wpisać.
 
 Off the main flow entirely.
 
+- **`/co-dalej`** (local to this fork): type it yourself to get one read-only recommendation for the current Issue, PR, graph or workbook. It uses actual evidence and stops before carrying out the recommendation. Use `/granica` instead for a context/session boundary decision.
 - **`/handoff`** in Kilo VS Code routes same-checkout continuation to **`/kilo-handoff`**. On explicit request it seeds a fresh session with the condensed context, then records release, verification of local Git changes, and claim before the successor writes.
 - **`/spawn`**: start an explicitly requested Kilo VS Code Agent Manager session without transferring write ownership. Use `local` for a fresh session in the same checkout and `worktree` for isolation on an agreed base. `spawn` reconciles uncertain starts, but does not schedule an issue graph. Internal subagents are not Agent Manager sessions.
 

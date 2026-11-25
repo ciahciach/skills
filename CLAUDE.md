@@ -8,6 +8,8 @@ Skills are organized into bucket folders under `skills/`:
 
 Every skill in `engineering/` or `productivity/` (the **promoted** buckets) must have a reference in the top-level `README.md` and an entry in `.claude-plugin/plugin.json`'s `skills` array (the Claude Code plugin ships exactly the promoted set). Skills in `misc/`, `in-progress/`, and `deprecated/` must not appear in either.
 
+Existing fork-local exceptions are listed in `scripts/check-frontmatter.mjs`. In particular, `co-dalej` is documented for this checkout but not shipped in the plugin; its explicit Kilo entry point is a project command.
+
 Install commands are copied verbatim from [.agents/install-block.md](./.agents/install-block.md). `.claude-plugin/marketplace.json` is the repo's own marketplace. Every agent except Claude Code installs from it to get automatic updates, and Claude Code uses `claude-plugins-official`. Run `npm run check-skills` after changing skills or either manifest. In Kilo VS Code, `/validate-skills` also checks which `spawn` copy the extension loads. For Claude Code distribution, `claude plugin validate . --strict` is a separate compatibility check. [ADR 0002](./.agents/adr/0002-ship-as-a-claude-code-plugin.md) records the packaging decision.
 
 Each skill entry in the top-level `README.md` must link the skill name to its `SKILL.md`.
