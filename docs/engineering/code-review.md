@@ -21,7 +21,7 @@ You must supply the fixed point. If you do not, the skill asks for one rather th
 
 ## Prerequisites
 
-The Standards axis needs nothing. It reads whatever the repo documents (`CODING_STANDARDS.md`, `CONTRIBUTING.md`, and the like) and falls back on a built-in baseline when the repo documents nothing.
+The Standards axis needs nothing. It reads the repo's documented rules (`CODING_STANDARDS.md`, `CONTRIBUTING.md`, and the like) and supplements them with a built-in baseline. It takes the root `CODING_STANDARDS.md` from the revision under review, not from local edits or a newer copy elsewhere.
 
 The Spec axis needs a spec to exist and be findable. It looks in this order:
 
@@ -78,7 +78,7 @@ Each fix adds new code to review, and the judgement-call half of the Standards a
 
 **Does it review my uncommitted work?**
 
-No. It diffs `<fixed-point>...HEAD`. The three-dot form measures from the merge-base and excludes staged and working-tree changes. If `implement` has not made an interim commit, the review cannot see the work that is about to go into the next commit. Commit first, then review, then amend or add a fixup.
+Not by default. The three-dot diff compares the merge-base to the `HEAD` commit and excludes staged and working-tree changes. A caller can explicitly supply a pinned candidate tree and its exact diff, as the Kilo VS Code `implement-spec` worker does before committing. Only the changes in that tree are reviewed.
 
 ## It's working if
 

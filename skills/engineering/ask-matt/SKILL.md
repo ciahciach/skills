@@ -110,6 +110,6 @@ Off the main flow entirely.
 
 **`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels, and doc layout the other skills assume. Custom issue trackers also work.
 
-**`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
+**`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. It proposes the versioned Excel section in the project's `CODING_STANDARDS.md` for authors and the Standards axis of `code-review`. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
 
 **`excel-router`** (Kilo VS Code on Windows, optional beta): for workbook work rather than repo setup, load this skill first when available. It selects a scoped recipe or reports a blocker; it is not shipped in the plugin.
