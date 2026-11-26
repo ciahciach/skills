@@ -1,6 +1,6 @@
 ---
 name: pr
-description: "Use when writing a PR body."
+description: "Always call this skill before drafting or updating a pull request body, including for draft PRs."
 metadata:
   credits:
     skill: show-me
@@ -23,7 +23,7 @@ Use this template for writing the PR body:
 
 ## Merge Danger
 
-**Door:** <one-way or two-way>
+**Door:** **<one-way door or two-way door>**
 
 <optional: description>
 
@@ -165,6 +165,6 @@ Execution-based evidence is A-tier. Test results, console output. Show the exact
 
 ### Merge Danger
 
-Describe whether it's a one-way or two-way door. You can walk back through two-way doors, but not one-way doors. A PR that is cheap to roll back is lower risk. Changes that involve destructive actions or hard-to-reverse decisions are one-way doors.
+Use exactly `**Door:** **two-way door**` when the effects are cheap to reverse, or `**Door:** **one-way door**` when they are destructive or hard to reverse. Keep the English wording and Markdown bold even if the rest of the body is in another language. Put any explanation on the next line.
 
-The blast radius is the potential impact or scope of the changes introduced by this PR. Consider all possibilities. Examples are layout shift, breakages for consumers, mobile responsiveness, etc.
+Always include a separate `**Blast Radius:**` line with a one-word description of the potential impact or scope. Add a brief explanation below it if needed, such as what could break for consumers or on mobile.
