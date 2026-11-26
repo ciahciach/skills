@@ -46,6 +46,10 @@ Implementers talk to the orchestrator through [context pointers](https://www.aih
 
 ## Common questions
 
+**Where does my manual test result go if the Kilo session disappears?**
+
+Report the result in Kilo. The agreed recorder saves it as a human-reported result on the issue or in agreed shared storage, with a reference a successor can open. The coordinator agrees that destination and write permission before requesting the test. You do not need to post it again yourself. Recording the result neither publishes code nor closes the issue.
+
 **What happens while Kilo waits for a human or a merge?**
 
 `HITL wymagany` identifies the native question, permission or merge that needs human action. Independent work can continue. The coordinator returns on a verifiable notification or a scheduled recheck; if neither is available, it reports that automatic continuation is unavailable. Sessions, worktrees and branches stay in place for separate cleanup.
@@ -94,6 +98,7 @@ A worktree holds only what git tracks. Tests that read gitignored fixtures, loca
 
 - Several implementers are running at once whenever the graph and host allow.
 - In Kilo VS Code, a dependent issue starts only after the last verified human merge. Each PR shows review evidence for its published diff.
+- A successor can find a recorded human acceptance result without the original Kilo session and tell what the human reported apart from what the agent ran.
 
 On other hosts:
 
