@@ -55,12 +55,13 @@ by export. Publication verifies the exact preview against the retained version.
 Stage only reviewed text files, never workbook binaries or a redacted preview. Acceptance
 checks the published export again; later exports do not advance sync.
 
-Only exact A1 targets of standalone ordinary formulas are editable here. The
-inventory summarizes omissions, not instructions. No values, cached formula
-results, connection strings or names' definitions are emitted. Saved Power
+Editable exports list exact A1 targets of standalone ordinary formulas and
+metadata-confirmed dynamic-array anchors, plus supported worksheet-scoped name
+definitions. The inventory summarizes omissions, not instructions. No values,
+cached formula results or connection strings are emitted. Saved Power
 Query M and its inventory are separate artifacts for the restricted pilot
 profile; see the Excel repo contract for the M import and manual load workflows.
-Shared and array formula records, spill ranges, what-if data tables,
+Shared and legacy array formula records, spill outputs, what-if data tables,
 and table-calculated columns are out of scope. Nonempty inline strings,
 recognized credential patterns and external formula references block the export.
 These checks are conservative, not a substitute for human review of identifiers
@@ -68,7 +69,7 @@ and formulas for sensitive information. No redacted export or import is provided
 
 Versions are named by SHA-256 and never replaced by this tool. Local read-only
 files do not protect against storage administrators; use appropriate retention
-and backups. For controlled ordinary-formula import, see the Excel repo contract.
+and backups. For controlled formula and name import, see the Excel repo contract.
 Only the explicit pq-pilot command launches Excel, and only for
 fresh synthetic workbooks in a private attempt directory.
 """
@@ -120,6 +121,10 @@ CREDENTIAL = re.compile(
 )
 EXTERNAL_FORMULA = re.compile(r'(?i)\[\d+\]|\[[^\]]*\.(?:xlsx?|xlsm|xlsb|xlam|csv)\]|://|\|')
 EVIDENCE_REF = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9 .:/_#-]{0,159}')
+SCOPED_ARTIFACTS = {
+    'dynamic-arrays.json': ('editable-dynamic-arrays', 'cells', ('sheet', 'cell'), ('spill', 'dialect', 'kind', 'formula')),
+    'scoped-names.json': ('editable-scoped-names', 'names', ('scope', 'name'), ('refersTo',)),
+}
 
 
 class Blocked(Exception):
@@ -281,7 +286,43 @@ def rectangle(reference):
     return left, top, right, bottom
 
 
-def workbook_artifacts(data, profile, *, format_only=False, power_query=False, worksheet_parts=None):
+def overlaps(first, second):
+    l, t, r, b = first
+    x, y, right, bottom = second
+    return l <= right and x <= r and t <= bottom and y <= b
+
+
+def dynamic_metadata_indices(metadata):
+    xda = '{http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray}'
+    types = metadata.findall(f'{S}metadataTypes/{S}metadataType')
+    dynamic = [i for i, entry in enumerate(types, 1)
+               if entry.get('name') == 'XLDAPR' and entry.get('cellMeta') in ('1', 'true')]
+    future = metadata.findall(f'{S}futureMetadata[@name="XLDAPR"]')
+    if metadata.tag != f'{S}metadata' or len(dynamic) != 1 or len(future) != 1:
+        return set()
+    records = set()
+    for i, block in enumerate(future[0].findall(f'{S}bk')):
+        extension = block.findall(f'{S}extLst/{S}ext')
+        if len(extension) != 1 or extension[0].get('uri', '').lower() != '{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}':
+            continue
+        props = extension[0].findall(f'{xda}dynamicArrayProperties')
+        if (len(props) == 1 and props[0].get('fDynamic') in ('1', 'true')
+                and props[0].get('fCollapsed', '0') in ('0', 'false')):
+            records.add(str(i))
+    return {str(i) for i, block in enumerate(metadata.findall(f'{S}cellMetadata/{S}bk'), 1)
+            if len(block) == 1 and block[0].tag == f'{S}rc'
+            and block[0].get('t') == str(dynamic[0]) and block[0].get('v') in records}
+
+
+def scoped_reference(formula, sheet):
+    match = re.fullmatch(r"=(.+)!(\$[A-Z]{1,3}\$[1-9][0-9]{0,6}(?::\$[A-Z]{1,3}\$[1-9][0-9]{0,6})?)", formula)
+    quoted = "'" + sheet.replace("'", "''") + "'"
+    if match and (match[1] == quoted or (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.]*', sheet) and match[1] == sheet)):
+        return rectangle(match[2].replace('$', ''))
+    return None
+
+
+def workbook_artifacts(data, profile, *, format_only=False, power_query=False, worksheet_parts=None, editable=None):
     cells, sheets = [], []
     remaining = MAX_PACKAGE
     with ZipFile(BytesIO(data)) as book:
@@ -338,6 +379,9 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
             raise Blocked('Saved workbook has a missing or unsupported VBA project part.')
         if format_only:
             return [], {}, None
+        metadata_links = [row for row in links.values() if row.get('Type') == f'{OFFICE}/sheetMetadata']
+        dynamic_indices = (dynamic_metadata_indices(xml(target(part, metadata_links[0], f'{OFFICE}/sheetMetadata')))
+                           if editable is not None and len(metadata_links) == 1 else set())
         mashup = read_mashup(book, CREDENTIAL, min(MAX_XML, remaining)) if power_query else None
         loads = []
         load_parts: dict[tuple[str, str], tuple[str, str]] = {}
@@ -348,7 +392,8 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                       or any('macrosheet' in item.get('ContentType', '').lower() for item in content_types)
                       or workbook.find(f'{S}externalReferences') is not None)
         sheet_names, sheet_parts = set(), set()
-        for sheet in sheet_nodes.findall(f'{S}sheet'):
+        scopes = {}
+        for sheet_index, sheet in enumerate(sheet_nodes.findall(f'{S}sheet')):
             name = sheet.attrib['name']
             relation = links[sheet.attrib[f'{{{OFFICE}}}id']]
             if not name or name.casefold() in sheet_names:
@@ -357,6 +402,7 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
             if relation.get('Type') != f'{OFFICE}/worksheet':
                 sheets.append({'sheet': name, 'type': 'non-worksheet'})
                 continue
+            scopes[str(sheet_index)] = name
             sheet_part = target(part, relation, f'{OFFICE}/worksheet')
             if sheet_part in sheet_parts:
                 raise Blocked('Duplicate worksheet part.')
@@ -368,6 +414,7 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                 raise Blocked('Unsupported worksheet structure.')
             table_parts = worksheet.findall(f'{S}tableParts/{S}tablePart')
             excluded_ranges = []
+            all_tables = []
             table_templates = 0
             if table_parts:
                 table_links = relationships(sheet_part)
@@ -376,6 +423,7 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                 table_part = target(sheet_part, relation, f'{OFFICE}/table')
                 definition = xml(table_part)
                 left, top, right, bottom = rectangle(definition.attrib['ref'])
+                all_tables.append((left, top, right, bottom))
                 columns = definition.findall(f'{S}tableColumns/{S}tableColumn')
                 if definition.tag != f'{S}table' or len(columns) != right - left + 1:
                     raise Blocked('Unsupported table structure.')
@@ -403,6 +451,7 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                         excluded_ranges.append((col, top, col, bottom))
 
             formulas = {}
+            anchors = {}
             excluded_kinds: Counter[str] = Counter()
             for cell in worksheet.findall(f'{S}sheetData/{S}row/{S}c'):
                 formula = cell.find(f'{S}f')
@@ -415,6 +464,12 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                 kind = formula.get('t', 'normal')
                 ordinary = (kind == 'normal' and not cell.get('cm')
                             and 'ref' not in formula.attrib and not len(formula) and bool(formula.text))
+                ref = formula.get('ref')
+                if (kind == 'array' and cell.get('cm') in dynamic_indices and not cell.get('vm')
+                        and ref and not len(formula) and formula.text and rectangle(ref)[:2] == coords):
+                    anchors[address] = (rectangle(ref), ref, formula.text)
+                    formulas[address] = (coords, False, formula.text)
+                    continue
                 if not ordinary:
                     if kind == 'array' and cell.get('cm'):
                         kind = 'arrayWithMetadata'
@@ -424,6 +479,20 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                     excluded_ranges.append(rectangle(formula.attrib['ref']))
                 formulas[address] = (coords, ordinary, formula.text)
 
+            merges = [rectangle(node.attrib['ref']) for node in worksheet.findall(f'{S}mergeCells/{S}mergeCell')]
+            exported_anchors = 0
+            for address, (area, ref, text) in sorted(anchors.items()):
+                if (worksheet.find(f'{S}sheetProtection') is not None
+                        or any(overlaps(area, other) for other in excluded_ranges + all_tables + merges)
+                        or any(overlaps(area, other) for key, (other, _, _) in anchors.items() if address != key)
+                        or any(overlaps(area, (*coords, *coords)) for key, (coords, _, _) in formulas.items()
+                               if address != key)):
+                    excluded_kinds['arrayWithMetadata'] += 1
+                elif editable is not None:
+                    exported_anchors += 1
+                    editable['dynamic-arrays.json'].append({'sheet': name, 'cell': address, 'spill': ref,
+                        'dialect': 'Formula2', 'kind': 'dynamic-array-anchor', 'formula': '=' + text})
+            excluded_ranges.extend(area for area, _, _ in anchors.values())
             count = 0
             for address, ((x, y), ordinary, text) in sorted(formulas.items()):
                 if ordinary and not any(l <= x <= r and t <= y <= b for l, t, r, b in excluded_ranges):
@@ -431,8 +500,8 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
                     count += 1
                 elif ordinary:
                     excluded_kinds['inExcludedRange'] += 1
-            sheets.append({'sheet': name, 'type': 'worksheet', 'editableFormulaRecords': count,
-                           'excludedFormulaRecords': len(formulas) - count,
+            sheets.append({'sheet': name, 'type': 'worksheet', 'editableFormulaRecords': count + exported_anchors,
+                           'excludedFormulaRecords': len(formulas) - count - exported_anchors,
                            'excludedByKind': dict(sorted(excluded_kinds.items())),
                            'tables': len(table_parts), 'calculatedColumnTemplates': table_templates})
 
@@ -478,20 +547,37 @@ def workbook_artifacts(data, profile, *, format_only=False, power_query=False, w
             query_snapshot = QuerySnapshot(mashup_part, part, queries, preservation, wiring, risky_open,
                                            load_parts, table_ranges)
 
+    defined_names = workbook.findall(f'{S}definedNames/{S}definedName')
+    if editable is not None:
+        keys = set()
+        for node in defined_names:
+            name, scope = node.get('name', ''), scopes.get(node.get('localSheetId', ''))
+            if scope is None:
+                continue
+            key = (scope, name.casefold())
+            if key in keys:
+                raise Blocked('Duplicate worksheet-scoped defined name.')
+            keys.add(key)
+            if (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.]{0,254}', name) and not name.lower().startswith('_xl')
+                    and node.attrib.keys() == {'name', 'localSheetId'} and not len(node) and node.text
+                    and scoped_reference('=' + node.text, scope)):
+                editable['scoped-names.json'].append({'scope': scope, 'name': name, 'refersTo': '=' + node.text})
+        editable['scoped-names.json'].sort(key=lambda row: (row['scope'], row['name']))
     inventory = {'kind': 'inventory-only', 'sheets': sheets,
-                 'definedNames': len(workbook.findall(f'{S}definedNames/{S}definedName')),
+                 'definedNames': len(defined_names),
                  'externalReferences': len(workbook.findall(f'{S}externalReferences/{S}externalReference')),
                  'hasConnectionsPart': any(row.get('Type') == f'{OFFICE}/connections' for row in links.values())}
     return cells, inventory, query_snapshot
 
 
 def build_export(data, workbook, template=None, desktop_verified=None, *, power_query=False, worksheet_parts=None):
+    editable: dict[str, list[dict[str, str]]] = {name: [] for name in SCOPED_ARTIFACTS}
     cells, inventory, query_snapshot = workbook_artifacts(
-        data, Path(workbook).suffix.lower(), power_query=power_query, worksheet_parts=worksheet_parts)
+        data, Path(workbook).suffix.lower(), power_query=power_query, worksheet_parts=worksheet_parts, editable=editable)
     for value in [workbook, *(sheet['sheet'] for sheet in inventory['sheets'])]:
         if CREDENTIAL.search(value):
             raise Blocked('Publication blocked: possible credential in workbook metadata.')
-    for cell in cells:
+    for cell in cells + editable['dynamic-arrays.json']:
         formula = cell['formula']
         if CREDENTIAL.search(formula) or any(m[0] != '""' for m in TEXT_LITERAL.finditer(formula)):
             raise Blocked('Publication blocked: possible credential or unreviewable inline text in a formula.')
@@ -499,6 +585,12 @@ def build_export(data, workbook, template=None, desktop_verified=None, *, power_
             raise Blocked('Publication blocked: an external formula is outside the supported export profile.')
     artifacts = {'ordinary-formulas.json': json_bytes({'kind': 'editable-ordinary-formulas', 'cells': cells}),
                  'inventory.json': json_bytes(inventory)}
+    if any(CREDENTIAL.search(value) for row in editable['scoped-names.json'] for value in row.values()):
+        raise Blocked('Publication blocked: possible credential in a defined name.')
+    for name, rows in editable.items():
+        if rows:
+            kind, collection, _, _ = SCOPED_ARTIFACTS[name]
+            artifacts[name] = json_bytes({'kind': kind, collection: rows})
     if power_query:
         if query_snapshot is None:
             raise Blocked('No supported saved Power Query M was found.')
@@ -722,13 +814,73 @@ def import_snapshot(data, workbook):
 
 COM_QUALIFICATION = 'https://github.com/ciahciach/skills/pull/63'
 COM_FIXTURE_EDIT = {'sheet': 'Calc', 'cell': 'B1', 'before': '=A1*2', 'after': '=A1*3'}
+SCOPED_OPERATION = 'scoped-array-name-import'
+SCOPED_PROFILE = 'scoped-array-xlsx'
+SEQUENCE = re.compile(r'=_xlfn\.SEQUENCE\(([1-9][0-9]{0,6}),([1-9][0-9]{0,4})'
+                      r'(?:,(-?[0-9]{1,12})(?:,(-?[0-9]{1,12}))?)?\)\Z')
 
 
-def preservation(data, parts, change=None, *, data_only=False, verified_result=None, com_fixture_edit=False):
+def scoped_map(filename, raw):
+    if raw is None:
+        return {}
+    kind, collection, keys, fields = SCOPED_ARTIFACTS[filename]
+    artifact = json.loads(raw, object_pairs_hook=unique_json_object)
+    if not isinstance(artifact, dict) or artifact.keys() != {'kind', collection} or artifact['kind'] != kind or not isinstance(artifact[collection], list):
+        raise Blocked('Invalid scoped import artifact.')
+    result = {}
+    seen = set()
+    for row in artifact[collection]:
+        if (not isinstance(row, dict) or row.keys() != set(keys + fields)
+                or any(not isinstance(value, str) or not value or len(value) > 8192 or CREDENTIAL.search(value)
+                       for value in row.values())
+                or ('refersTo' in row and not scoped_reference(row['refersTo'], row['scope']))
+                or ('formula' in row and (EXTERNAL_FORMULA.search(row['formula'])
+                    or any(m[0] != '""' for m in TEXT_LITERAL.finditer(row['formula']))))):
+            raise Blocked('Invalid or potentially sensitive scoped import entry.')
+        key = (row[keys[0]], row[keys[1]])
+        canonical = (key[0].casefold(), key[1].casefold())
+        if canonical in seen:
+            raise Blocked('Duplicate scoped import entry.')
+        seen.add(canonical)
+        result[key] = row
+    return result
+
+
+def scoped_diff(before, after, *, omissions=False):
+    keys = before.keys() | after.keys() if omissions else after.keys()
+    return [{'before': before.get(key), 'after': after.get(key)} for key in sorted(keys)
+            if before.get(key) != after.get(key)]
+
+
+def validate_scoped_pair(diffs):
+    if any(len(rows) != 1 or any(row is None for row in rows[0].values()) for rows in diffs.values()):
+        raise Blocked('Expected one existing dynamic-array anchor and one existing scoped name edit.')
+    array = diffs['dynamic-arrays.json'][0]
+    name = diffs['scoped-names.json'][0]
+    anchor = array['before']
+    if (any(array['after'][key] != anchor[key] for key in ('sheet', 'cell', 'kind', 'dialect', 'spill'))
+            or any(name['after'][key] != name['before'][key] for key in ('scope', 'name'))):
+        raise Blocked('Scope, targets, kind, dialect and spill footprint cannot change.')
+    l, t, r, b = rectangle(anchor['spill'])
+    dimensions = (b - t + 1, r - l + 1)
+    for row in array.values():
+        match = SEQUENCE.fullmatch(row['formula'])
+        if not match or (int(match[1]), int(match[2])) != dimensions or dimensions[0] * dimensions[1] > 256:
+            raise Blocked('Scoped import requires a bounded integer SEQUENCE with unchanged spill dimensions.')
+    return anchor, name['before']
+
+
+def preservation(data, parts, change=None, *, data_only=False, verified_result=None, com_fixture_edit=False,
+                 scoped=False, scoped_pair=None, scoped_com_edit=False):
     """Conservative package comparison for simple XLSX; return hashes, never values."""
     allowed = re.compile(r'(?:\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app|custom)\.xml|'
                          r'xl/(?:_rels/workbook\.xml\.rels|workbook\.xml|styles\.xml|sharedStrings\.xml|calcChain\.xml|'
                          r'theme/theme[0-9]+\.xml|worksheets/sheet[0-9]+\.xml))\Z')
+    scoped_parts = re.compile(r'xl/(?:metadata\.xml|tables/table[0-9]+\.xml|worksheets/_rels/sheet[0-9]+\.xml\.rels)\Z')
+    slots: set[tuple[int, int]] = set()
+    matched_name = 0
+    anchor, name = scoped_pair if scoped_pair else (None, None)
+    area = rectangle(anchor['spill']) if anchor else None
     with ZipFile(BytesIO(data)) as book:
         entries = book.infolist()
         if len(set(book.namelist())) != len(entries):
@@ -737,23 +889,55 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
             raise Blocked('Workbook exceeds the preservation comparison limit.')
         hashes = {}
         for part in book.namelist():
-            if not allowed.fullmatch(part):
+            if not allowed.fullmatch(part) and not (scoped and scoped_parts.fullmatch(part)):
                 raise Blocked('Workbook has parts outside the simple XLSX import profile.')
             raw = book.read(part)
             if b'\0' in raw or b'<!DOCTYPE' in raw or b'<!ENTITY' in raw:
                 raise Blocked('Unsupported preservation XML.')
-            xml = ET.fromstring(raw)
+            parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True, insert_pis=True)) if scoped else None
+            xml = ET.fromstring(raw, parser=parser)
             if (any(node.get('TargetMode', 'Internal') != 'Internal' for node in xml)
                     or any(node.tag in {f'{S}{tag}' for tag in
                            ('definedName', 'externalReference', 'oleObject', 'control',
-                            'workbookProtection', 'sheetProtection', 'oleObjects', 'controls')} for node in xml.iter())):
+                             'workbookProtection', 'sheetProtection', 'oleObjects', 'controls')}
+                            and not (scoped and part == 'xl/workbook.xml' and node.tag == f'{S}definedName')
+                            for node in xml.iter())):
                 raise Blocked('Workbook has features outside the simple XLSX import profile.')
+            if scoped and part == 'xl/metadata.xml':
+                if not dynamic_metadata_indices(xml):
+                    raise Blocked('Unrecognized dynamic-array metadata.')
+                hashes[part] = sha(raw)
+                continue
+            if scoped and part.startswith('xl/tables/') and (
+                    xml.tag != f'{S}table' or xml.get('tableType', 'worksheet') != 'worksheet'
+                    or 'connectionId' in xml.attrib):
+                raise Blocked('Only static worksheet tables may be preserved in a scoped import.')
             for extension_list in xml.iter(f'{S}extLst'):
                 calc = '{http://schemas.microsoft.com/office/spreadsheetml/2018/calcfeatures}'
-                if part == 'xl/workbook.xml' and extension_list in xml and all(
-                        node.tag in {f'{S}extLst', f'{S}ext', calc + 'calcFeatures', calc + 'feature'}
-                        for node in extension_list.iter()):
-                    continue
+                if part == 'xl/workbook.xml' and extension_list in xml:
+                    native_properties = {
+                        '{140A7094-0E35-4892-8432-C4D2E57EDEB5}': (
+                            '{http://schemas.microsoft.com/office/spreadsheetml/2010/11/main}workbookPr',
+                            'chartTrackingRefBase', r'0|1|true|false'),
+                        '{D14903EA-33C4-47F7-8F05-3474C54BE107}': (
+                            '{http://schemas.microsoft.com/office/spreadsheetml/2024/workbookCompatibilityVersion}version',
+                            'setVersion', r'[0-9]{1,10}'),
+                    }
+                    for ext in extension_list:
+                        if all(node.tag in {f'{S}ext', calc + 'calcFeatures', calc + 'feature'}
+                               for node in ext.iter()):
+                            continue
+                        property_spec = native_properties.get(ext.get('uri', '')) if scoped else None
+                        if property_spec and ext.tag == f'{S}ext' and ext.attrib.keys() == {'uri'} and len(ext) == 1:
+                            tag, attribute, pattern = property_spec
+                            prop = ext[0]
+                            if (prop.tag == tag and prop.attrib.keys() == {attribute} and not len(prop)
+                                    and re.fullmatch(pattern, prop.attrib[attribute])
+                                    and not any((text or '').strip() for text in (ext.text, prop.text, prop.tail))):
+                                continue  # Still included in the preservation hash.
+                        break
+                    else:
+                        continue
                 if (part == 'xl/styles.xml' and xml.tag == f'{S}styleSheet' and extension_list in xml
                         and len(xml.findall(f'{S}extLst')) == 1 and not extension_list.attrib and len(extension_list) == 2
                         and all(not (node.text or '').strip() and not (node.tail or '').strip()
@@ -773,7 +957,21 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
                 # Desktop Excel emits these empty defaults with no slicer or timeline parts.
                 hashes[part] = sha(raw)
                 continue
-            if part in ('docProps/custom.xml', 'xl/calcChain.xml', 'xl/workbook.xml'):
+            if scoped and part == 'xl/workbook.xml':
+                if scoped_com_edit and scoped_pair:
+                    pointers = xml.findall('{http://schemas.microsoft.com/office/spreadsheetml/2014/revision}revisionPtr')
+                    if len(pointers) == 1 and pointers[0].get('documentId', '').strip():
+                        pointers[0].set('documentId', '')
+                sheets = [node.attrib['name'] for node in xml.findall(f'{S}sheets/{S}sheet')]
+                for node in xml.findall(f'{S}definedNames/{S}definedName'):
+                    if (not node.text or not (any(scoped_reference('=' + node.text, sheet) for sheet in parts)
+                            or re.fullmatch(r'-?[0-9]{1,12}(?:\.[0-9]{1,8})?', node.text))):
+                        raise Blocked('Only local absolute-range or numeric constant names may be preserved in a scoped import.')
+                    if (name and node.get('name') == name['name']
+                            and node.get('localSheetId') == str(sheets.index(name['scope']))):
+                        matched_name += 1
+                        node.text = None
+            elif part in ('docProps/custom.xml', 'xl/calcChain.xml', 'xl/workbook.xml'):
                 # The qualified copy may rotate a revision ID and reorder exactly two peer cells.
                 # Keep every other byte, including the label, XML comments and namespace bindings.
                 if com_fixture_edit and part == 'xl/workbook.xml':
@@ -803,8 +1001,27 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
                 for cell in xml.findall(f'{S}sheetData/{S}row/{S}c'):
                     formula = cell.find(f'{S}f')
                     value = cell.find(f'{S}v')
-                    if formula is not None and (formula.attrib or cell.get('cm') or cell.get('vm')):
+                    if not scoped and formula is not None and (formula.attrib or cell.get('cm') or cell.get('vm')):
                         raise Blocked('Special formula records are outside the simple XLSX import profile.')
+                    if anchor and area and part == parts[anchor['sheet']]:
+                        l, t, r, b = area
+                        x, y = coordinates(cell.attrib['r'])
+                        if l <= x <= r and t <= y <= b:
+                            if ((x, y) in slots or value is None or not value.text or cell.get('t', 'n') != 'n'
+                                    or ((x, y) == (l, t)) != (formula is not None)
+                                    or ((x, y) != (l, t) and (cell.get('cm') or cell.get('vm')))):
+                                raise Blocked('Expected only the anchor and numeric spill values at the approved footprint.')
+                            slots.add((x, y))
+                            try:
+                                spill_value = Decimal(value.text)
+                            except InvalidOperation:
+                                raise Blocked('Saved spill lacks a valid numeric result.') from None
+                            if (not spill_value.is_finite()
+                                    or (verified_result is not None and spill_value != verified_result[y - t][x - l])):
+                                raise Blocked('Saved value does not match the independent spill readback.')
+                            value.text = None
+                            if formula is not None:
+                                formula.text = None
                     if change and part == parts[change['sheet']] and cell.get('r') == change['cell']:
                         x, y = coordinates(change['cell'])
                         merges = (rectangle(node.attrib['ref']) for node in xml.findall(f'{S}mergeCells/{S}mergeCell'))
@@ -828,9 +1045,55 @@ def preservation(data, parts, change=None, *, data_only=False, verified_result=N
                     elif data_only and formula is None and cell.get('t') == 'inlineStr':
                         for text in cell.findall(f'{S}is//{S}t'):
                             text.text = None
+            if scoped and part not in parts.values() and part not in ('xl/workbook.xml', 'docProps/core.xml'):
+                hashes[part] = sha(raw)
+                continue
             namespaces = list(event for _, event in ET.iterparse(BytesIO(raw), events=('start-ns',)))
             hashes[part] = sha(json_bytes(namespaces) + ET.tostring(xml))
+    if area and (matched_name != 1 or len(slots) != (area[2] - area[0] + 1) * (area[3] - area[1] + 1)):
+        raise Blocked('Approved scope or complete spill footprint not found.')
     return hashes
+
+
+def scoped_preserves_edit(current, saved, parts, pair, matrix, *, com_edit=False):
+    before = preservation(current, parts, scoped=True, scoped_pair=pair, scoped_com_edit=com_edit)
+    after = preservation(saved, parts, scoped=True, scoped_pair=pair, verified_result=matrix,
+                         scoped_com_edit=com_edit)
+    metadata = 'xl/metadata.xml'
+    if com_edit and metadata in before and metadata in after and before[metadata] != after[metadata]:
+        with ZipFile(BytesIO(saved)) as book:
+            raw = book.read(metadata)
+        # Permit only an added, unused root binding, not its removal or changes to metadata records.
+        if raw.count(b'xlrd') == 1 and b'&#' not in raw:
+            normalized, count = re.subn(
+                rb'\A((?:<\?xml[^?]*\?>\s*)?<metadata\b[^<>]*?)'
+                rb' xmlns:xlrd="http://schemas\.microsoft\.com/office/spreadsheetml/2017/richdata"(?=[\s>])',
+                rb'\1', raw, count=1)
+            if count and sha(normalized) == before[metadata]:
+                namespaces = ET.iterparse(BytesIO(raw), events=('start-ns', 'start'))
+                for event, node in namespaces:
+                    if event == 'start':
+                        break
+                    if node == ('xlrd', 'http://schemas.microsoft.com/office/spreadsheetml/2017/richdata'):
+                        after[metadata] = before[metadata]
+                        break
+    return before == after
+
+
+def committed_artifact(root, oid, path):
+    entry = git(root, '--literal-pathspecs', 'ls-tree', oid, '--', path)
+    if entry.returncode or (entry.stdout and not entry.stdout.startswith(('100644 blob ', '100755 blob '))):
+        raise Blocked('Expected a regular committed import artifact.')
+    if not entry.stdout:
+        return None
+    object_id = entry.stdout.split(None, 3)[2]
+    size = git(root, 'cat-file', '-s', object_id)
+    if size.returncode or int(size.stdout) > MAX_XML:
+        raise Blocked('Cannot read the committed artifact within the supported size limit.')
+    content = git(root, 'cat-file', 'blob', object_id)
+    if content.returncode:
+        raise Blocked('Cannot read the committed artifact.')
+    return content.stdout
 
 
 def import_plan(root, store, args):
@@ -851,28 +1114,25 @@ def import_plan(root, store, args):
             raise Blocked('Approved synchronization manifest does not match the retained workbook.')
     source = repo_path(root, sync['workbook'])
     output = repo_path(root, args.output)
-    artifact = repo_path(root, args.artifacts) / 'ordinary-formulas.json'
-    path = artifact.relative_to(root).as_posix()
+    artifact_dir = repo_path(root, args.artifacts).relative_to(root)
+    path = (artifact_dir / 'ordinary-formulas.json').as_posix()
     commit = git(root, 'rev-parse', '--verify', '--end-of-options', f'{args.commit}^{{commit}}')
     if commit.returncode:
         raise Blocked('Expected an approved Git commit.')
     oid = commit.stdout.strip()
-    entry = git(root, '--literal-pathspecs', 'ls-tree', oid, '--', path)
-    if entry.returncode or (entry.stdout and not entry.stdout.startswith(('100644 blob ', '100755 blob '))):
-        raise Blocked('Expected a regular committed formula artifact.')
-    edited = {}
-    if entry.stdout:
-        object_id = entry.stdout.split(None, 3)[2]
-        size = git(root, 'cat-file', '-s', object_id)
-        if size.returncode or int(size.stdout) > MAX_XML:
-            raise Blocked('Cannot read the committed formula artifact within the supported size limit.')
-        content = git(root, 'cat-file', 'blob', object_id)
-        if content.returncode:
-            raise Blocked('Cannot read the committed formula artifact.')
-        edited = formula_map(content.stdout)
-    plan = {'operation': IMPORT_OPERATION, 'profile': IMPORT_PROFILE, 'commit': oid, 'artifact': path, 'base': sync,
+    content = committed_artifact(root, oid, path)
+    edited = formula_map(content) if content is not None else {}
+    base_scoped = {key: scoped_map(key, base_export.get(key)) for key in SCOPED_ARTIFACTS}
+    git_scoped = {key: scoped_diff(base_scoped[key], scoped_map(key, committed_artifact(root, oid,
+                  (artifact_dir / key).as_posix()))) for key in SCOPED_ARTIFACTS}
+    scoped = any(git_scoped.values())
+    plan = {'operation': SCOPED_OPERATION if scoped else IMPORT_OPERATION,
+            'profile': SCOPED_PROFILE if scoped else IMPORT_PROFILE, 'commit': oid, 'artifact': path, 'base': sync,
             'output': output.relative_to(root).as_posix(), 'gitDiff': formula_diff(old, edited),
             'workbookDiff': [], 'blockers': []}
+    if scoped:
+        plan['gitScopedDiff'] = git_scoped
+        plan['scopedArtifacts'] = [(artifact_dir / key).as_posix() for key in SCOPED_ARTIFACTS]
     blockers = plan['blockers']
     if (source == output or output.suffix.lower() != '.xlsx' or not output.parent.is_dir()
             or git(root, 'check-ignore', '--quiet', '--', plan['output']).returncode):
@@ -885,16 +1145,30 @@ def import_plan(root, store, args):
     try:
         current = read_bounded(source, MAX_PACKAGE)
         plan['inputSha256'] = sha(current)
-        parts, _, live = import_snapshot(current, sync['workbook'])
+        parts, current_export, live = import_snapshot(current, sync['workbook'])
     except (Blocked, OSError, ValueError, KeyError, ET.ParseError, BadZipFile):
         blockers.append('Cannot read and verify the saved source workbook.')
         return plan, source, output, None, {}, sync_path, sync_bytes
     plan['workbookDiff'] = formula_diff(old, live, omissions=True)
+    workbook_scoped = {key: scoped_diff(base_scoped[key], scoped_map(key, current_export.get(key)), omissions=True)
+                       for key in SCOPED_ARTIFACTS}
+    if scoped or any(workbook_scoped.values()):
+        plan['workbookScopedDiff'] = workbook_scoped
     changes = plan['gitDiff']
     change = changes[0] if len(changes) == 1 else None
-    if plan['workbookDiff']:
-        blockers.append('Two-sided managed drift; no merge.' if changes else 'Workbook managed drift; export and review first.')
-    if not change or any(value is None or len(value) > 8192 or not SAFE_FORMULA.fullmatch(value)
+    if plan['workbookDiff'] or any(workbook_scoped.values()):
+        blockers.append('Two-sided managed drift; no merge.' if changes or scoped else 'Workbook managed drift; export and review first.')
+    if scoped:
+        if current != base:
+            blockers.append('Unsafe address drift: scoped edits require the exact approved workbook bytes; no row remapping.')
+        if changes:
+            blockers.append('Ordinary formula edits cannot be mixed with the scoped pair.')
+        try:
+            pair = validate_scoped_pair(git_scoped)
+            preservation(current, parts, scoped=True, scoped_pair=pair)
+        except Blocked as error:
+            blockers.append(str(error))
+    elif not change or any(value is None or len(value) > 8192 or not SAFE_FORMULA.fullmatch(value)
                          for value in (change['before'], change['after'])):
         blockers.append('Expected exactly one existing ordinary formula edit using simple arithmetic or SUM.')
     else:
@@ -919,7 +1193,7 @@ def import_plan(root, store, args):
             fields = ('entryPoint', 'backend', 'backendVersion', 'excelBuild', 'qualification', 'authorization')
             if (sha(raw) != pin or not isinstance(route, dict) or route.get('evidenceClass') != 'desktop'
                     or any(not isinstance(route.get(key), str) or not route[key].strip() for key in fields)
-                    or route.get('operation') != IMPORT_OPERATION or route.get('profile') != IMPORT_PROFILE
+                    or route.get('operation') != plan['operation'] or route.get('profile') != plan['profile']
                     or route.get('inputSha256') != sha(current) or route.get('commit') != oid
                     or route.get('output') != plan['output']):
                 raise Blocked('Route receipt does not match the approved backend, operation, profile and inputs.')
@@ -927,12 +1201,15 @@ def import_plan(root, store, args):
             require_private(no_op_path)
             no_op = read_bounded(no_op_path, MAX_PACKAGE)
             if (route.get('noOpSha256') != sha(no_op)
-                    or preservation(no_op, parts) != preservation(current, parts)):
+                    or preservation(no_op, parts, scoped=scoped) != preservation(current, parts, scoped=scoped)):
                 raise Blocked('Qualified no-op save does not preserve workbook contents.')
             plan.update({key: route[key] for key in fields[:4]})
             plan.update(routeSha256=pin, noOpSha256=sha(no_op), preservation='verified no-op')
-            if (route['qualification'] == COM_QUALIFICATION and route['backend'] == 'pywin32 DispatchEx'
-                    and route['backendVersion'] == '312' and route['excelBuild'] == '16.0.20527.20194 x64'
+            native_com = (route['backend'] == 'pywin32 DispatchEx' and route['backendVersion'] == '312'
+                          and route['excelBuild'] == '16.0.20527.20194 x64')
+            if scoped and native_com:
+                plan['copyMetadataPolicy'] = 'scoped-com-edit'
+            elif (not scoped and native_com and route['qualification'] == COM_QUALIFICATION
                     and change == COM_FIXTURE_EDIT and parts == {'Calc': 'xl/worksheets/sheet1.xml'}
                     and live == {('Calc', 'B1'): '=A1*2', ('Calc', 'C1'): '=A1+1'}):
                 plan['copyMetadataPolicy'] = 'qualified-com-fixture'
@@ -962,21 +1239,43 @@ def controlled_import(root, store, args):
     print(f'Desktop save attested: {version}')
     if args.reopened != version:
         raise Blocked('Independent desktop reopen attestation must match the saved bytes.')
-    try:
-        verified_result = Decimal(args.result)
-    except InvalidOperation:
-        raise Blocked('Independent desktop readback must record a numeric result.') from None
-    if not verified_result.is_finite():
-        raise Blocked('Independent desktop readback must record a finite numeric result.')
     result_parts, exported, formulas = import_snapshot(saved, plan['output'])
-    _, _, original = import_snapshot(current, plan['base']['workbook'])
-    change = plan['gitDiff'][0]
-    original[change['sheet'], change['cell']] = change['after']
-    com_fixture_edit = plan.get('copyMetadataPolicy') == 'qualified-com-fixture'
-    if (formulas != original or result_parts != parts
-            or preservation(saved, result_parts, change, verified_result=verified_result,
-                            com_fixture_edit=com_fixture_edit)
-            != preservation(current, parts, change, com_fixture_edit=com_fixture_edit)):
+    _, current_export, original = import_snapshot(current, plan['base']['workbook'])
+    if plan['operation'] == SCOPED_OPERATION:
+        scoped_diffs = plan['gitScopedDiff']
+        pair = validate_scoped_pair(scoped_diffs)
+        l, t, r, b = rectangle(pair[0]['spill'])
+        matrix = json.loads(args.result, parse_int=Decimal, parse_float=Decimal)
+        if (not isinstance(matrix, list) or len(matrix) != b - t + 1
+                or any(not isinstance(row, list) or len(row) != r - l + 1
+                       or any(not isinstance(value, Decimal) or not value.is_finite() for value in row) for row in matrix)):
+            raise Blocked('Independent spill readback must be a finite numeric JSON matrix for the exact footprint.')
+        sequence = SEQUENCE.fullmatch(scoped_diffs['dynamic-arrays.json'][0]['after']['formula'])
+        assert sequence is not None  # validate_scoped_pair checked the plan formula.
+        start, step = int(sequence[3] or 1), int(sequence[4] or 1)
+        if any(value != start + step * (y * (r - l + 1) + x)
+               for y, row in enumerate(matrix) for x, value in enumerate(row)):
+            raise Blocked('Independent spill readback does not match the approved SEQUENCE.')
+        scoped_matches = all(scoped_diff(scoped_map(key, current_export.get(key)), scoped_map(key, exported.get(key)),
+                                         omissions=True) == scoped_diffs[key] for key in SCOPED_ARTIFACTS)
+        matches = (scoped_matches and formulas == original and result_parts == parts
+                   and scoped_preserves_edit(current, saved, parts, pair, matrix,
+                                             com_edit=plan.get('copyMetadataPolicy') == 'scoped-com-edit'))
+    else:
+        try:
+            verified_result = Decimal(args.result)
+        except InvalidOperation:
+            raise Blocked('Independent desktop readback must record a numeric result.') from None
+        if not verified_result.is_finite():
+            raise Blocked('Independent desktop readback must record a finite numeric result.')
+        change = plan['gitDiff'][0]
+        original[change['sheet'], change['cell']] = change['after']
+        com_fixture_edit = plan.get('copyMetadataPolicy') == 'qualified-com-fixture'
+        matches = (formulas == original and result_parts == parts
+                   and preservation(saved, result_parts, change, verified_result=verified_result,
+                                    com_fixture_edit=com_fixture_edit)
+                   == preservation(current, parts, change, com_fixture_edit=com_fixture_edit))
+    if not matches:
         raise Blocked('Independent re-export does not match the approved edit and preservation requirements.')
     manifest = sha(exported['manifest.json'])
     print(f'Verified readback and re-export. Manifest SHA-256: {manifest}')
@@ -1371,6 +1670,271 @@ def unique_json_object(pairs):
     return result
 
 
+VBA_PART = 'xl/vbaProject.bin'
+VBA_SOURCE = 'vba-module-source-v1'
+VBA_OPERATION = 'existing-vba-module-import'
+VBA_PROFILE = 'restricted-xlsm'
+VBA_NAMES = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,30}')
+VBA_CONTROLS = dict.fromkeys(('macros', 'events', 'refresh', 'updateLinks', 'autoSave'), False)
+VBA_PACKAGE_PARTS = re.compile(
+    r'\[Content_Types\]\.xml|_rels/\.rels|docProps/(?:core|app|custom)\.xml|'
+    r'xl/(?:workbook\.xml|_rels/workbook\.xml\.rels|worksheets/sheet[0-9]+\.xml|'
+    r'theme/theme[0-9]+\.xml|styles\.xml|sharedStrings\.xml|calcChain\.xml|vbaProject\.bin)'
+)
+
+
+def vba_package(data):
+    workbook_artifacts(data, '.xlsm', format_only=True)
+    with ZipFile(BytesIO(data)) as book:
+        if sum(item.file_size for item in book.infolist()) > MAX_PACKAGE:
+            raise Blocked('XLSM exceeds the package comparison limit.')
+        names = book.namelist()
+        if VBA_PART not in names or any(not VBA_PACKAGE_PARTS.fullmatch(name) for name in names):
+            raise Blocked('XLSM contains unsupported or unverifiable package parts.')
+        for name in ('_rels/.rels', 'xl/_rels/workbook.xml.rels', '[Content_Types].xml'):
+            raw = book.read(name)
+            text = raw.decode('utf-8-sig')
+            if '\0' in text or '<!' in text:
+                raise Blocked('Unsupported XLSM package metadata.')
+            records = list(ET.fromstring(text))
+            if any(node.get('TargetMode', 'Internal') != 'Internal' for node in records) or any(
+                    token in text.lower() for token in ('macrosheet', 'signature', 'externallink', 'connections')):
+                raise Blocked('XLSM has an unsupported signature, link, connection or XLM capability.')
+            if name == 'xl/_rels/workbook.xml.rels':
+                if [node.get('Target') for node in records if node.get('Type') == VBA_PROJECT] != ['vbaProject.bin']:
+                    raise Blocked('Expected the VBA project at its canonical XLSM part.')
+        hosts: list[str] = []
+        for name in names:
+            if name == 'xl/workbook.xml' or re.fullmatch(r'xl/worksheets/sheet[0-9]+\.xml', name):
+                text = book.read(name).decode('utf-8-sig')
+                if '\0' in text or '<!' in text:
+                    raise Blocked('Unsupported XLSM host metadata.')
+                node = ET.fromstring(text)
+                prop = 'workbookPr' if name == 'xl/workbook.xml' else 'sheetPr'
+                hosts.extend(item.get('codeName', '') for item in node.findall(f'{S}{prop}'))
+        if (len(hosts) != 1 + sum(name.startswith('xl/worksheets/') for name in names)
+                or any(not VBA_NAMES.fullmatch(host) for host in hosts)
+                or len({host.casefold() for host in hosts}) != len(hosts)):
+            raise Blocked('Expected one explicit, unique code name for each workbook and worksheet VBA host.')
+        return sha(book.read(VBA_PART)), set(hosts)
+
+
+def vba_readback(raw, expected_sha, stage, workbook_sha, hosts):
+    record = json.loads(raw, object_pairs_hook=unique_json_object)
+    fields = {'workbookSha256', 'stage', 'evidence', 'projectPolicy', 'complete',
+              'referencesSha256', 'projectMetadataSha256', 'modules'}
+    if (sha(raw) != expected_sha or not isinstance(record, dict) or set(record) != fields or record['stage'] != stage
+            or record['workbookSha256'] != workbook_sha or not EVIDENCE_REF.fullmatch(record['evidence'])
+            or CREDENTIAL.search(record['evidence'])):
+        raise Blocked('A pinned VBA readback must identify its exact saved workbook and stage.')
+    if record['projectPolicy'] != 'editable-unsigned' or record['complete'] is not True:
+        raise Blocked('VBA project is protected, restricted, or not fully observable. No bypass is permitted.')
+    if any(not SHA.fullmatch(record[key]) for key in ('referencesSha256', 'projectMetadataSha256')):
+        raise Blocked('VBA project or reference evidence is missing.')
+    modules = vba_modules(record['modules'], metadata=True)
+    if {name for name, module in modules.items() if module['kind'] == 'document'} != hosts:
+        raise Blocked('Document module inventory does not match the saved workbook and worksheet code names.')
+    return modules, (record['referencesSha256'], record['projectMetadataSha256']), record['evidence']
+
+
+def vba_modules(modules, *, metadata=False):
+    fields = {'kind', 'source', 'metadataSha256'} if metadata else {'kind', 'source'}
+    if (not isinstance(modules, dict) or not 1 <= len(modules) <= 100
+            or len({name.casefold() for name in modules}) != len(modules)):
+        raise Blocked('VBA inventory is empty, ambiguous, or exceeds the supported limit.')
+    for name, module in modules.items():
+        if CREDENTIAL.search(name):
+            raise Blocked('Credential-like content prevents VBA export or import.')
+        if (not VBA_NAMES.fullmatch(name) or not isinstance(module, dict) or set(module) != fields
+                or module['kind'] not in ('standard', 'class', 'document')
+                or metadata and not SHA.fullmatch(module['metadataSha256'])):
+            raise Blocked('Unsupported VBA component or missing module identity evidence.')
+        text = module['source']
+        if not metadata:
+            if not isinstance(text, list) or not text or any(not isinstance(line, str) or '\n' in line for line in text):
+                raise Blocked('Expected an editable VBA source array with one string per line.')
+            text = '\n'.join(text)
+        if not isinstance(text, str) or '\r' in text or '\0' in text or re.search(r'(?im)^\s*Attribute\s', text):
+            raise Blocked('Expected LF-normalized editable code only, without VBE attributes.')
+        if CREDENTIAL.search(text):
+            raise Blocked('Credential-like content prevents VBA export or import.')
+    return modules
+
+
+def vba_source(modules):
+    return {'kind': VBA_SOURCE, 'modules': {name: {'kind': module['kind'], 'source': module['source'].split('\n')}
+                                           for name, module in sorted(modules.items())}}
+
+
+def vba_export_artifacts(sync, modules, snapshot_sha, evidence):
+    artifact = json_bytes(vba_source(modules))
+    manifest = {'kind': 'private-vba-export', 'workbook': sync['workbook'], 'versionSha256': sync['versionSha256'],
+                'snapshotSha256': snapshot_sha, 'operatorReopenEvidence': evidence,
+                'files': {'vba-modules.json': sha(artifact)}}
+    return {'manifest.json': json_bytes(manifest), 'vba-modules.json': artifact}
+
+
+def vba_workflow(root, store, args):
+    sync_file = store / 'sync.json'
+    preview = preview_path(store, args.label)
+    require_private(store, sync_file, preview.parent, preview)
+    if preview.exists():
+        raise Blocked('Choose a new private review label.')
+    sync_bytes = read_bounded(sync_file, MAX_XML)
+    sync = json.loads(sync_bytes, object_pairs_hook=unique_json_object)
+    metadata, _ = verified_export(root, store, repo_path(root, args.baseline), sync['manifestSha256'])
+    if any(sync.get(key) != metadata[key] for key in ('schema', 'workbook', 'versionSha256')):
+        raise Blocked('The synchronization point does not identify the retained workbook.')
+    source = workbook_path(root, metadata['workbook'], metadata.get('templateManifestSha256'))
+    if source.suffix.lower() != '.xlsm' or git(root, 'check-ignore', '--quiet', '--', sync['workbook']).returncode:
+        raise Blocked('VBA workflow requires a pinned, Git-ignored XLSM workbook.')
+    template = store / 'templates' / metadata['templateManifestSha256'] / 'template.json'
+    if json.loads(read_bounded(template, MAX_XML))['companions']:
+        raise Blocked('XLSM with UserForm companions requires the separate native form workflow.')
+    version = sync['versionSha256']
+    retained = store / 'versions' / f'{version}.xlsm'
+    base = retained_bytes(retained, version)
+    live = read_bounded(source, MAX_PACKAGE)
+    base_project, hosts = vba_package(base)
+    live_project, live_hosts = vba_package(live)
+    if args.command == 'vba-export':
+        snapshot_path = repo_path(store, args.snapshot)
+        require_private(snapshot_path.parent, snapshot_path)
+        modules, _, evidence = vba_readback(read_bounded(snapshot_path, MAX_XML), args.snapshot_sha256,
+                                            'baseline-reopen', version, hosts)
+        if (live != base or read_bounded(source, MAX_PACKAGE) != live or read_bounded(sync_file, MAX_XML) != sync_bytes
+                or source.with_name('~$' + source.name).exists()):
+            raise Blocked('VBA baseline export requires the exact saved retained base.')
+        artifacts = vba_export_artifacts(sync, modules, args.snapshot_sha256, evidence)
+        preview.parent.mkdir(mode=0o700, exist_ok=True)
+        write_export(preview, artifacts)
+        print(f'Exported VBA source for private disclosure review. Manifest SHA-256: {sha(artifacts["manifest.json"])}')
+        return
+
+    if not args.route_sha256 or not SHA.fullmatch(args.route_sha256):
+        raise Blocked('A pinned, authorized desktop route and no-op evidence are required.')
+    route_dir = repo_path(store, 'vba-routes/' + args.route_sha256)
+    route_file, baseline_file, noop_snapshot = (route_dir / name for name in ('route.json', 'baseline.json', 'noop.json'))
+    attempt = repo_path(store, 'candidates/' + args.label)
+    candidate, receipt, reopened = (attempt / name for name in ('workbook.xlsm', 'plan.json', 'reopen.json'))
+    lock = candidate.with_name('~$' + candidate.name)
+    require_private(route_dir.parent, route_dir, route_file, baseline_file, noop_snapshot,
+                    attempt.parent, attempt, candidate, receipt, reopened)
+    if (lock.exists() or attempt.exists() != (args.command == 'vba-verify')
+            or candidate.exists() and candidate.stat().st_nlink != 1):
+        raise Blocked('Expected an unlocked copy and a new label before apply, or a prepared candidate for verification.')
+    raw_route = read_bounded(route_file, MAX_XML)
+    route = json.loads(raw_route, object_pairs_hook=unique_json_object)
+    fields = ('entryPoint', 'backend', 'backendVersion', 'excelBuild', 'qualification', 'authorization', 'noOpSave')
+    if not isinstance(route, dict):
+        raise Blocked('Expected a pinned VBA route receipt object.')
+    controls = route.get('openingControls')
+    if (sha(raw_route) != args.route_sha256 or route.get('operation') != VBA_OPERATION
+            or route.get('profile') != VBA_PROFILE or route.get('evidenceClass') != 'desktop'
+            or route.get('candidate') != args.label or route.get('inputSha256') != sha(live)
+            or not isinstance(controls, dict) or controls.keys() != VBA_CONTROLS.keys()
+            or any(value is not False for value in controls.values())
+            or any(not EVIDENCE_REF.fullmatch(route[key]) or CREDENTIAL.search(route[key]) for key in fields)):
+        raise Blocked('Desktop route evidence does not match qualification, authorization or current inputs.')
+    snapshot_sha = route['baselineSnapshotSha256']
+    modules, project, baseline_evidence = vba_readback(read_bounded(baseline_file, MAX_XML), snapshot_sha,
+                                                       'baseline-reopen', version, hosts)
+    baseline_manifest = vba_export_artifacts(sync, modules, snapshot_sha, baseline_evidence)['manifest.json']
+    if args.reviewed_vba != sha(baseline_manifest):
+        raise Blocked('The desktop baseline does not match the reviewed VBA export manifest.')
+    edit_path = repo_path(root, args.edit)
+    edit = read_bounded(edit_path, MAX_XML)
+    proposal = json.loads(edit, object_pairs_hook=unique_json_object)
+    if not isinstance(proposal, dict) or set(proposal) != {'kind', 'modules'} or proposal['kind'] != VBA_SOURCE:
+        raise Blocked('Expected the editable VBA source artifact, not an inventory.')
+    desired = vba_modules(proposal['modules'])
+    if {name: row['kind'] for name, row in modules.items()} != {name: row['kind'] for name, row in desired.items()}:
+        raise Blocked('VBA import cannot add, remove, rename or replace any component.')
+    changed = sorted(name for name in modules if modules[name]['source'].split('\n') != desired[name]['source'])
+    if base_project != live_project or hosts != live_hosts:
+        raise Blocked('Saved VBA project differs from sync. Proposed changes: '
+                      + (', '.join(changed) or 'none') + '. No merge attempted.')
+    if not changed:
+        raise Blocked('No existing VBA module code changed.')
+    if live != base and preserved_parts(live, VBA_PART, allow_cell_values=True) != preserved_parts(
+            base, VBA_PART, allow_cell_values=True):
+        raise Blocked('Workbook drift beyond supported numeric/boolean data-only changes.')
+
+    def preserved(result, folder):
+        vba_package(result)
+        before, after = preserved_parts(live, VBA_PART), preserved_parts(result, VBA_PART)
+        if before.get('xl/workbook.xml') != after.get('xl/workbook.xml'):
+            if excel_copy_metadata_changes(live, result, folder) is None:
+                return False
+            before.pop('xl/workbook.xml')
+            after.pop('xl/workbook.xml')
+        return before == after
+
+    noop_copy = repo_path(store, route['noOpPath'])
+    noop_lock = noop_copy.with_name('~$' + noop_copy.name)
+    require_private(noop_copy.parent, noop_copy)
+    if (noop_copy.is_relative_to(attempt) or noop_copy.is_relative_to(retained.parent)
+            or noop_copy.suffix.lower() != '.xlsm' or noop_copy.name.startswith('~$') or noop_lock.exists()
+            or noop_copy.stat().st_nlink != 1):
+        raise Blocked('Expected an unlocked and separate no-op XLSM copy in private storage.')
+    noop = read_bounded(noop_copy, MAX_PACKAGE)
+    noop_modules, noop_project, noop_evidence = vba_readback(read_bounded(noop_snapshot, MAX_XML),
+                                                            route['noOpSnapshotSha256'], 'noop-reopen', sha(noop), hosts)
+    if (route['noOpSha256'] != sha(noop) or route['noOpSave'] == noop_evidence
+            or (noop_modules, noop_project) != (modules, project)
+            or not preserved(noop, noop_copy.parent)):
+        raise Blocked('No-op save/reopen did not preserve workbook contents or VBA project identity.')
+    plan = {'operation': VBA_OPERATION, 'profile': VBA_PROFILE, 'candidate': args.label,
+            'workbook': sync['workbook'], 'retainedSha256': version, 'inputSha256': sha(live),
+            'syncSha256': sha(sync_bytes), 'editSha256': sha(edit), 'routeSha256': args.route_sha256,
+            'reviewedVbaSha256': args.reviewed_vba, 'noOpSha256': sha(noop), 'changedModules': changed,
+            'checks': ['module source and identity', 'workbook and worksheet host code names', 'references',
+                       'project topology', 'adjacent workbook parts'], 'runMacros': False, 'refresh': False}
+    approval = sha(json_bytes(plan))
+    if args.command == 'vba-plan':
+        print(json_bytes({**plan, 'planSha256': approval}).decode('utf-8'), end='')
+        return
+    workbook_path(root, sync['workbook'], metadata['templateManifestSha256'])
+    if (approval != args.approved_plan or read_bounded(source, MAX_PACKAGE) != live
+            or read_bounded(sync_file, MAX_XML) != sync_bytes or read_bounded(edit_path, MAX_XML) != edit or lock.exists()):
+        raise Blocked('Inputs no longer match the approved VBA dry-run.')
+    proof = json_bytes({'planSha256': approval})
+    if args.command == 'vba-prepare':
+        attempt.parent.mkdir(mode=0o700, exist_ok=True)
+        write_export(attempt, {candidate.name: live, receipt.name: proof})
+        print('Prepared a private XLSM copy. No Excel save, macro, or refresh was performed.')
+        return
+
+    if (read_bounded(receipt, MAX_XML) != proof or not EVIDENCE_REF.fullmatch(args.save_evidence)
+            or CREDENTIAL.search(args.save_evidence)):
+        raise Blocked('A matching preparation receipt and separate desktop save evidence are required.')
+    result = read_bounded(candidate, MAX_PACKAGE)
+    observed, observed_project, evidence = vba_readback(read_bounded(reopened, MAX_XML), args.reopened,
+                                                        'candidate-reopen', sha(result), hosts)
+    if (args.saved != sha(result) or evidence == args.save_evidence or vba_package(result)[0] == live_project
+            or not preserved(result, attempt)
+            or vba_source(observed)['modules'] != desired or observed_project != project
+            or {name: row['metadataSha256'] for name, row in observed.items()}
+            != {name: row['metadataSha256'] for name, row in modules.items()}):
+        raise Blocked('Saved copy did not preserve workbook and VBA identity or match the intended VBA source.')
+    if (read_bounded(candidate, MAX_PACKAGE) != result or lock.exists()
+            or read_bounded(source, MAX_PACKAGE) != live or read_bounded(sync_file, MAX_XML) != sync_bytes):
+        raise Blocked('Workbook or synchronization point changed during verification.')
+    artifact = json_bytes(vba_source(observed))
+    report = {'kind': 'private-vba-copy-verification', 'workbook': sync['workbook'], 'retainedSha256': version,
+              'candidateSha256': sha(result), 'planSha256': approval, 'reopenSnapshotSha256': args.reopened,
+              'checks': {'noOpPreservation': 'VERIFIED_AGAINST_ATTESTED_READBACK',
+                         'reExport': 'VERIFIED_AGAINST_ATTESTED_READBACK', 'macrosExecutedByCli': False,
+                         'vbeCompilation': 'NOT_RUN', 'fixtureScenario': 'NOT_RUN'},
+              'operatorAttestations': {'routeSha256': args.route_sha256, 'openingControls': VBA_CONTROLS,
+                                       'noOpReopen': noop_evidence,
+                                       'save': args.save_evidence, 'reopen': evidence},
+              'files': {'vba-modules.json': sha(artifact)}}
+    preview.parent.mkdir(mode=0o700, exist_ok=True)
+    write_export(preview, {'manifest.json': json_bytes(report), 'vba-modules.json': artifact})
+    print('Verified saved workbook parts and attested VBA readback. No synchronization was performed.')
+
+
 def verify_query_copy(data, snapshot, result, expected, folder):
     observed = checked_query_snapshot(result)
     if observed.queries != expected:
@@ -1740,11 +2304,31 @@ def main():
         if name in ('verify-import', 'accept-import'):
             command.add_argument('--saved', required=True, help='SHA-256 attested after desktop save and close.')
             command.add_argument('--reopened', required=True, help='SHA-256 attested after independent desktop reopen.')
-            command.add_argument('--result', required=True, help='Independently read numeric result (synthetic data only).')
+            command.add_argument('--result', required=True,
+                                 help='Independent numeric readback, or a row-major JSON matrix for a spill (synthetic data only).')
         if name == 'accept-import':
             command.add_argument('--reviewed', required=True, help='Verified re-export manifest SHA-256.')
     pilot = commands.add_parser('pq-pilot', help='Run the disposable native Power Query pilot on Windows.')
     pilot.add_argument('--desktop', action='store_true', help='Authorize Excel to create a fresh synthetic fixture.')
+    for name in ('vba-export', 'vba-plan', 'vba-prepare', 'vba-verify'):
+        command = commands.add_parser(name)
+        command.add_argument('baseline', help='Published workbook export at the approved synchronization point.')
+        if name != 'vba-export':
+            command.add_argument('edit', help='Reviewed vba-modules.json, relative to the worktree.')
+        command.add_argument('label', help='New private review or candidate label.')
+        command.add_argument('--store', required=True)
+        if name == 'vba-export':
+            command.add_argument('--snapshot', required=True, help='Desktop readback JSON relative to the private store.')
+            command.add_argument('--snapshot-sha256', required=True)
+        else:
+            command.add_argument('--route-sha256')
+            command.add_argument('--reviewed-vba', required=True, help='SHA-256 of the reviewed vba-export manifest.')
+        if name in ('vba-prepare', 'vba-verify'):
+            command.add_argument('--approved-plan', required=True)
+        if name == 'vba-verify':
+            command.add_argument('--saved', required=True, help='Candidate workbook SHA-256 attested after save/close.')
+            command.add_argument('--reopened', required=True, help='Independent reopen.json SHA-256.')
+            command.add_argument('--save-evidence', required=True)
     args = parser.parse_args()
     try:
         if args.command == 'pq-pilot':
@@ -1770,6 +2354,8 @@ def main():
             return controlled_import(root, store, args)
         elif args.command in ('pq-load-review', 'pq-load-accept'):
             power_query_load_change(root, store, args)
+        elif args.command.startswith('vba-'):
+            vba_workflow(root, store, args)
         else:
             power_query_import(root, store, args)
     except (Blocked, QueryBlocked) as error:
