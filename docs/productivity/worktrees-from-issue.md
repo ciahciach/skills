@@ -20,7 +20,11 @@ Open the target repository in Kilo VS Code with Agent Manager available. The Git
 
 **Do the startup prompts run automatically?**
 
-Not necessarily. Agent Manager can deliver a slash line as prompt text. When that happens, the session presents a read-only brief and the exact command to run manually. Starting a session is not permission to modify issues, write code or open pull requests.
+Not necessarily. Agent Manager can deliver the slash line as plain text. The start report distinguishes worktree creation from command execution and shows the exact command to run manually if needed. Carry over any requested worker instructions separately if you run it by hand.
+
+**Can I skip a ticket or add an instruction for just one session?**
+
+Yes. Add `skip #91` to exclude that ticket, or say `For #92, also tell me which alternatives were considered` to add an instruction below the command in that session only. Without an explicit worker instruction, the whole startup prompt is the command and the ticket URL on one line.
 
 **What if Agent Manager shortens the card title?**
 
@@ -29,7 +33,7 @@ The skill checks the displayed title separately from the branch and section. If 
 ## It's working if
 
 - Every selected ticket has its own worktree and the prompt names that ticket, not its parent.
-- Closed tickets, grandchildren and blocked implementation tickets do not get worktrees.
+- Closed tickets, grandchildren, blocked implementation tickets and tickets you excluded do not get worktrees.
 - If you request a section, each new worktree appears there and has the exact issue title or a reported naming discrepancy.
 
 ## Where it fits

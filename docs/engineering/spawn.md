@@ -24,7 +24,7 @@ Not necessarily. A receipt can show acceptance or queuing, and a card alone does
 
 **Can I prepare worktrees from a GitHub issue tree?**
 
-Use [worktrees-from-issue](https://aihero.dev/skills-worktrees-from-issue) to choose tickets, prompts and an optional Agent Manager section. It preserves the requested `#<number> <title>` card label and keeps the attempt ID in the prompt rather than the card name.
+Use [worktrees-from-issue](https://aihero.dev/skills-worktrees-from-issue) to choose tickets, prompts and an optional Agent Manager section. It preserves the requested `#<number> <title>` card label and keeps the attempt ID out of the prompt. The start report verifies session creation separately from command execution.
 
 **The tool timed out. Can I run `/spawn` again?**
 

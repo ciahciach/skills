@@ -7,7 +7,7 @@
       "expected_output": "A read-only preview with exactly #103, #104 and #105, the /wayfinder line using each ticket URL and the verified section name. No session starts or mutations.",
       "files": [],
       "assertions": [
-        "Selects exactly #103, #104 and #105 with /wayfinder and their own URLs.",
+        "Selects exactly #103, #104 and #105. Each entire prompt is exactly /wayfinder followed by a space and its own URL, with no extra lines or metadata.",
         "Resolves 1. DECISION to the unique 1 - Decision match.",
         "Does not start or move sessions or write to GitHub."
       ]
@@ -18,7 +18,7 @@
       "expected_output": "Only #201 is selected with /implement https://github.com/example/project/issues/201. #202 and #203 are skipped with distinct reasons. No session starts or mutations.",
       "files": [],
       "assertions": [
-        "Selects only #201 with /implement and its own URL.",
+        "Selects only #201. Its entire prompt is exactly /implement https://github.com/example/project/issues/201.",
         "Explains missing base evidence for #202 and missing readiness for #203.",
         "Does not start or move sessions or write to GitHub."
       ]
@@ -30,6 +30,18 @@
       "files": [],
       "assertions": [
         "Rejects the body-only parent claim and produces neither startup command.",
+        "Does not start or move sessions or write to GitHub."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "/worktrees-from-issue https://github.com/example/project/issues/100 --dry-run. Skip #103. For #104, append this instruction: Also tell me which alternatives were considered. Fixture: #100 is a wayfinder:map; direct children #103, #104 and #105 are open wayfinder:grilling. There are no existing sessions or PRs. No section requested.",
+      "expected_output": "A read-only preview that reports #103 as explicitly skipped, gives #104 the command plus the requested second line, and gives #105 only its command.",
+      "files": [],
+      "assertions": [
+        "Does not prepare a prompt or worktree for #103 and reports the requested exclusion.",
+        "The exact #104 prompt is /wayfinder https://github.com/example/project/issues/104 followed by a newline and Also tell me which alternatives were considered.",
+        "The exact #105 prompt is /wayfinder https://github.com/example/project/issues/105 with no other text.",
         "Does not start or move sessions or write to GitHub."
       ]
     }
