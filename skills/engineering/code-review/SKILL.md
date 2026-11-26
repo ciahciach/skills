@@ -18,7 +18,7 @@ The issue tracker should have been provided to you. If not, tell the user to run
 
 Whatever the user said is the fixed point (a commit SHA, branch name, tag, `main`, `HEAD~5`, etc.). If they didn't specify one, ask for it.
 
-Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+If the caller supplies an exact diff against a pinned candidate tree (such as an `implement-spec` pre-commit review), use that diff and its candidate tree on both axes. Record the supplied commit context. Otherwise resolve `HEAD` to the candidate commit SHA and capture `git diff <fixed-point>...<candidate-commit>` (three-dot, against the merge-base) and `git log <fixed-point>..<candidate-commit> --oneline`.
 
 Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here, not inside two parallel sub-agents.
 
@@ -33,7 +33,7 @@ Look for the originating spec, in this order:
 
 ### 3. Identify the standards sources
 
-Search the repo for every file that documents how code should be written. When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists, it must be on the list.
+Search the repo for every file that documents how code should be written. When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists, it must be on the list. For the root `CODING_STANDARDS.md`, read the candidate snapshot via `git show <candidate-commit>:CODING_STANDARDS.md`. If the caller explicitly overrides the diff with a candidate tree, use that tree for the lookup. If absent in the snapshot, do not substitute a worktree copy or external version.
 
 On top of whatever the repo documents, the Standards axis always carries the **smell baseline** below: a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:
 
@@ -62,7 +62,7 @@ Issue both sub-agent calls together, in the foreground, and aggregate the report
 **Standards sub-agent prompt** should include:
 
 - The full diff command and commit list.
-- The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full (the sub-agent has no other access to it).
+- The list of standards-source files you found in step 3, with the candidate-bound reference (or recorded absence) for root `CODING_STANDARDS.md`, **plus the smell baseline from step 3** pasted in full (the sub-agent has no other access to it). Instruct the sub-agent to use the candidate copy of that file only.
 - The brief: "Report, per file/hunk where relevant, (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls: documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words."
 
 **Spec sub-agent prompt** should include:

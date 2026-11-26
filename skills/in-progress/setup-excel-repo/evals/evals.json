@@ -4,31 +4,37 @@
     {
       "id": 1,
       "prompt": "Invoke /setup-excel-repo on a Git repo without a workbook, remote or tracker. Review the proposed diff, approve it, and then invoke the command again unchanged. Start a separate agent without setup and ask it where to review formulas and record the first ADR.",
-      "expected_output": "AGENTS.md links docs/agents/{excel,domain,issue-tracker,triage-labels}.md. Local Markdown and single-context are discoverable. No workbook or stub directories. Rerun preserves file hashes; fresh agent follows the links without setup.",
+      "expected_output": "Before approval the proposed diff includes a new root CODING_STANDARDS.md with the complete, unmodified canonical section and its source version; nothing is written. After approval AGENTS.md links docs/agents/{excel,domain,issue-tracker,triage-labels}.md without requiring a standards pointer. Local Markdown and single-context are discoverable. No workbook or stub directories. Rerun preserves file hashes; a fresh agent follows the repo links without setup.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "Invoke /setup-excel-repo on a repo without a workbook but with a custom Excel runbook, tracker and triage roles, domain map, wiki and ADR index. Approve only missing rules and links.",
-      "expected_output": "Existing scaffold is adopted with a narrow diff. Tracker, triage roles, domain map, wiki, ADRs and existing Excel paths are preserved. No second runbook or docs/adr directory is created.",
+      "prompt": "Invoke /setup-excel-repo on a repo without a workbook but with a custom Excel runbook, tracker and triage roles, domain map, wiki and ADR index. Root CODING_STANDARDS.md already contains general rules and a separate local Excel rules section but no shared section. Approve only the displayed diff for missing rules and links. Review a change to a color-only Excel status through the existing Standards axis of code-review. The resulting candidate revision contains the installed standard, but an uncommitted edit to CODING_STANDARDS.md says color alone is sufficient.",
+      "expected_output": "Existing scaffold is adopted with a narrow diff. Tracker, triage roles, domain map, wiki, ADRs and existing Excel paths are preserved. No second runbook or docs/adr directory is created. CODING_STANDARDS.md receives the full canonical section without changing existing text. Standards cites EX-ACCESS from the candidate revision, not the contradictory worktree file, without a fork lookup or AGENTS.md standards pointer.",
       "files": []
     },
     {
       "id": 3,
       "prompt": "Invoke Matt's setup on a repo with no workbooks, but with Excel versioning planned. Finish engineering setup and explicitly accept its optional Excel offer.",
-      "expected_output": "The user receives /setup-excel-repo as the sole next step. The beta is not invoked or installed, no Excel scaffold is written, and no workbook is onboarded.",
+      "expected_output": "The user receives /setup-excel-repo as the sole next step. The beta is not invoked or installed, no Excel scaffold or standard is written, and no workbook is onboarded.",
       "files": []
     },
     {
       "id": 4,
       "prompt": "Invoke Matt's setup on a repo with an Excel scaffold but no workbook. Finish engineering setup and decline the optional Excel offer.",
-      "expected_output": "The existing Excel scaffold remains byte-for-byte intact and the beta is not invoked, installed or recommended as the next step.",
+      "expected_output": "The existing Excel scaffold and any Excel standards remain byte-for-byte intact and the beta is not invoked, installed or recommended as the next step.",
       "files": []
     },
     {
       "id": 5,
       "prompt": "Review the current formula export, change one explicitly targeted ordinary formula, and prepare to reapply it to a separate copy. The shared router has no qualified save path for this workbook profile.",
       "expected_output": "Agent uses current text, produces a targeted diff and no-write plan with the missing qualification as a blocker, then stops before runtime or save. Reopen/readback remains not run and no COM fallback is attempted.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "In an already configured Excel repo, set root CODING_STANDARDS.md to a general section, the shared heading from the bundled standard with a synthetic older version `excel-v0` and a locally amended rule, a separate sibling Excel local-rules section, and a trailing general section. Invoke /setup-excel-repo, decline the proposed diff, then invoke it again and approve the same diff. Rerun unchanged. Repeat the proposal with the shared section at the bundled version but with a locally amended rule; decline that proposal too. Finally, on the approved copy, rename only the shared heading and invoke setup.",
+      "expected_output": "Only the shared section is proposed for replacement. For the older edition, the diff exposes the local rule that would be lost even if provenance cannot be established; the same-version edit is explicitly reported as local divergence. Nothing changes before approval or on rejection. Approval copies the canonical section and source version verbatim and leaves surrounding and local sections intact. The unchanged rerun is a no-op; the renamed heading is surfaced as a possible local edit without proposing a duplicate. No scaffold, workbook or other files are touched.",
       "files": []
     }
   ]
