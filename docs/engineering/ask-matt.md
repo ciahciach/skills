@@ -17,7 +17,7 @@ You invoke this by typing `/ask-matt`; the agent won't reach for it on its own.
 | One next step for an existing Issue, PR or workbook in this fork | Type `/co-dalej` in the Kilo checkout to inspect the current evidence without executing the recommendation |
 | A skill you have already picked | Nothing useful. Invoke that skill directly. |
 | A repo that needs Excel workbook versioning or the shared Excel review standard | The optional `/setup-excel-repo` beta, run by the user even if there is no workbook yet. It proposes the Excel section for `CODING_STANDARDS.md` so authors and reviewers use the same revision. |
-| An Excel workbook task in Kilo VS Code on Windows | The optional `excel-router` beta, if available; it selects a recipe or reports a blocker |
+| An Excel workbook task in Kilo VS Code on Windows | The optional `excel-router` beta, if available; it uses current exports or sufficient passive reads directly. For runtime or save, it uses scoped evidence or separately authorized synthetic qualification, otherwise it reports a blocker |
 
 ## Prerequisites
 
