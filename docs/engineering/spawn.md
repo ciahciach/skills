@@ -22,6 +22,10 @@ Use Kilo VS Code with Agent Manager and native permission for the requested oper
 
 Not necessarily. A receipt can show acceptance or queuing, and a card alone does not show that the prompt arrived. Look for the worker's start confirmation for the attempt ID, assignment, checkout and branch, then a separate outcome report backed by evidence.
 
+**Can I prepare worktrees from a GitHub issue tree?**
+
+Use [worktrees-from-issue](https://aihero.dev/skills-worktrees-from-issue) to choose tickets, prompts and an optional Agent Manager section. It preserves the requested `#<number> <title>` card label and keeps the attempt ID in the prompt rather than the card name.
+
 **The tool timed out. Can I run `/spawn` again?**
 
 A timeout does not prove failure. Check the current Agent Manager, Git and, for GitHub-backed work, GitHub records first.

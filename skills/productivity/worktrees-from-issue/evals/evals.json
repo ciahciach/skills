@@ -1,0 +1,37 @@
+{
+  "skill_name": "worktrees-from-issue",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/worktrees-from-issue https://github.com/example/project/issues/100 --dry-run. I want three open grilling tickets in 1. DECISION, with no GitHub writes. Fixture: #100 is wayfinder:map; direct children #103, #104 and #105 are open wayfinder:grilling; #106 is closed grilling; #107 is open research. #108 is a grilling grandchild linked in the map body. The only equivalent Agent Manager section is '1 - Decision'.",
+      "expected_output": "A read-only preview with exactly #103, #104 and #105, the /wayfinder line using each ticket URL and the verified section name. No session starts or mutations.",
+      "files": [],
+      "assertions": [
+        "Selects exactly #103, #104 and #105 with /wayfinder and their own URLs.",
+        "Resolves 1. DECISION to the unique 1 - Decision match.",
+        "Does not start or move sessions or write to GitHub."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "/worktrees-from-issue https://github.com/example/project/issues/200 --dry-run. Fixture: #200 is the agreed implementation spec. Direct open child #201 is ready-for-agent and has no assignment, PR or blockers. Direct open child #202 is ready-for-agent and has a closed prerequisite whose code is not on the target base. Direct open child #203 is not marked ready. No section requested.",
+      "expected_output": "Only #201 is selected with /implement https://github.com/example/project/issues/201. #202 and #203 are skipped with distinct reasons. No session starts or mutations.",
+      "files": [],
+      "assertions": [
+        "Selects only #201 with /implement and its own URL.",
+        "Explains missing base evidence for #202 and missing readiness for #203.",
+        "Does not start or move sessions or write to GitHub."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "/worktrees-from-issue https://github.com/example/project/issues/300 --dry-run. Fixture: #300 is open and labelled wayfinder:grilling, but has no native parent. Its body says 'Part of #100', and #100 has the map label. What would start?",
+      "expected_output": "No selection, no /implement fallback and no writes. Explain that the issue body does not prove native parentage.",
+      "files": [],
+      "assertions": [
+        "Rejects the body-only parent claim and produces neither startup command.",
+        "Does not start or move sessions or write to GitHub."
+      ]
+    }
+  ]
+}

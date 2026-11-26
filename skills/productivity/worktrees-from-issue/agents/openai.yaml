@@ -1,0 +1,5 @@
+interface:
+  display_name: "Worktrees from Issue"
+  short_description: "Prepare Kilo worktrees from GitHub tickets"
+policy:
+  allow_implicit_invocation: false
