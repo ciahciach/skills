@@ -2,7 +2,7 @@
 
 `setup-matt-pocock-skills` answers three questions about one repo: where issues live, what the triage labels are called, and where the domain docs sit. It records the answers as markdown files under `docs/agents/`.
 
-Those files are the only thing that varies between repos. The skills themselves are identical everywhere. They read `docs/agents/issue-tracker.md` at run time and do what it says. That is why the set is not tied to GitHub, and why you never edit a skill file to point it at another tracker. Invoking it with "link the skills to a custom issue tracker" works with anything you can connect to programmatically, with no changes to the skills.
+The files vary by repo; the skills do not. They read `docs/agents/issue-tracker.md` at run time rather than assuming GitHub. This fork's setup also offers a root `GLOSSARY.md` with shared Issue tracker, Kilo Code in VS Code, Excel and general workflow terminology, even when the repo does not use Excel.
 
 It is a prompt-driven skill, not a deterministic script. It reads your `git remote`, `CLAUDE.md` and `GLOSSARY.md`, proposes what it found, and waits for you to confirm before it writes anything.
 
@@ -10,7 +10,8 @@ It is a prompt-driven skill, not a deterministic script. It reads your `git remo
 
 You invoke this by typing `/setup-matt-pocock-skills`; the [agent](https://www.aihero.dev/ai-coding-dictionary/agent) won't reach for it on its own. Its metadata marks it non-invokable on purpose, so no other skill can fire it for you.
 
-Reach for it once per repo, before the first use of an engineering skill that needs tracker and domain configuration. If [triage](https://aihero.dev/skills-triage), [to-spec](https://aihero.dev/skills-to-spec), [to-tickets](https://aihero.dev/skills-to-tickets) or [wayfinder](https://aihero.dev/skills-wayfinder) start guessing where your issues go, or apply labels your tracker doesn't have, this repo has not been set up yet. You can run it in a repo halfway through a project. The skill reads what is already there, so no earlier work is lost.
+- Run it before the first use of an engineering skill that needs tracker and domain configuration, even if the project is already underway. For example, [triage](https://aihero.dev/skills-triage) should not have to guess your tracker or its labels.
+- Rerun it explicitly to review updates to the shared glossary. The skill reads the existing glossary and proposes only targeted changes.
 
 For Excel versioning, this skill can offer the separate `/setup-excel-repo` beta, even before the repo has a workbook. Opting in gives you the command to run yourself. This skill does not install it, invoke it, or change the Excel scaffold or workbook. The beta can also run standalone and configure the engineering guidance itself.
 
@@ -22,6 +23,7 @@ It writes into the repo you run it in:
 | --- | --- |
 | `issue-tracker.md` | `docs/agents/` |
 | `domain.md` | `docs/agents/` |
+| `GLOSSARY.md` and, for an existing map, a link in `GLOSSARY-MAP.md` | repo root, only for approved glossary changes |
 | `triage-labels.md` | `docs/agents/`, only when the `triage` skill is installed |
 | An `## Agent skills` block | whichever of `CLAUDE.md` or `AGENTS.md` already exists |
 
@@ -35,7 +37,7 @@ It starts each section with the recommended answer, and skips any question its e
 | --- | --- | --- |
 | **Issue tracker** | the one matching your `git remote` | always, because this is the one real choice |
 | **Triage labels** | keep the five canonical names (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) | only if the `triage` skill is installed |
-| **Domain docs** | single-context: one `GLOSSARY.md` plus `docs/adr/` at the root | only if it spots monorepo signals, and then it offers a multi-context `GLOSSARY-MAP.md` |
+| **Domain docs** | preserve an existing `GLOSSARY-MAP.md`; otherwise default to single-context | only if it spots monorepo signals and there is no map, and then it offers a multi-context layout |
 
 The tracker options:
 
@@ -58,7 +60,22 @@ No. GitHub, GitLab and local markdown under `.scratch/` all ship as ready-made t
 
 **Do I need to re-run it after updating the skills?**
 
-The direct answer after v1.1 was yes. The skill's own closing message is softer. It tells you to re-run only to switch trackers or start over. Both are defensible. The seed templates change between versions, so a `docs/agents/issue-tracker.md` from an older release can go out of date against the skills that now read it. If a downstream skill does something different from what the docs describe, re-run setup. It is cheap.
+No update runs setup for you. Run it explicitly to review new shared terms or proposed updates to entries you previously adopted. A run with no approved glossary changes leaves the glossary and map untouched.
+
+**What if I already have a glossary?**
+
+What setup can propose depends on where the term lives:
+
+- In the root glossary, it can propose replacing a conflicting local definition. Without explicit approval, the local entry stays where it is.
+- In a mapped context, it leaves local definitions untouched. The context definition takes precedence there.
+
+In the proposal you can see:
+
+- Shared terms missing from the root `GLOSSARY.md`.
+- The current and proposed versions of previously adopted entries that changed.
+- Both definitions when a local term conflicts with a shared one.
+
+Only approved changes are written, with the bundled source and adopted version recorded for each shared entry.
 
 **It wrote to `CLAUDE.md`, but I'm on Codex.**
 
@@ -87,10 +104,11 @@ One long-standing complaint says yes, in these words: *"having a skill to set up
 
 - `docs/agents/issue-tracker.md` and `docs/agents/domain.md` exist, plus `triage-labels.md` if `triage` is installed.
 - An `## Agent skills` section appears in the instruction file your harness reads, with a one-line summary pointing at each of those files.
+- Adopted shared entries appear in a separate section. Unapproved definitions and existing context mappings are preserved, and a rerun with no approved changes leaves the glossary files untouched.
 - The tracker it proposed matches the remote you use, and the label strings match labels that exist in your tracker.
 - Afterwards, `/to-tickets` publishes without asking you where issues live, and `/triage` applies labels rather than inventing them.
 - Nothing in the skill files themselves changed. If setup edited a `SKILL.md`, something went wrong.
 
 ## Where it fits
 
-`setup-matt-pocock-skills` is the **run-once setup** for the engineering flow, the precondition everything else assumes rather than a step in the chain. Its neighbours are its readers: [triage](https://aihero.dev/skills-triage), which applies the label vocabulary written here; [to-spec](https://aihero.dev/skills-to-spec) and [to-tickets](https://aihero.dev/skills-to-tickets), which publish into the tracker named here; and [wayfinder](https://aihero.dev/skills-wayfinder), which reads the "Wayfinding operations" section of the same tracker file to learn how to store maps and child [tickets](https://www.aihero.dev/ai-coding-dictionary/ticket). [domain-modeling](https://aihero.dev/skills-domain-modeling) later fills in the domain-doc layout that setup records. It creates `GLOSSARY.md` and ADRs only when you resolve a term or decision, so a repo with no domain docs after setup is normal. For which skill to reach for next, [ask-matt](https://aihero.dev/skills-ask-matt) routes the whole set.
+`setup-matt-pocock-skills` is the **initial setup** for the engineering flow, with explicit reruns for shared glossary updates. Its neighbours are [triage](https://aihero.dev/skills-triage), which uses the label vocabulary, and [domain-modeling](https://aihero.dev/skills-domain-modeling), which adds project-specific terms and decisions as they are resolved. [ask-matt](https://aihero.dev/skills-ask-matt) routes the whole set.

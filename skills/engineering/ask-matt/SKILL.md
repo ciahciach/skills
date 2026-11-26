@@ -108,7 +108,7 @@ Off the main flow entirely.
 
 ## Precondition
 
-**`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels, and doc layout the other skills assume. Custom issue trackers also work.
+**`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels and domain docs, and start a shared glossary even without Excel. Rerun explicitly to review glossary updates.
 
 **`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. It proposes the versioned Excel section in the project's `CODING_STANDARDS.md` for authors and the Standards axis of `code-review`. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
 

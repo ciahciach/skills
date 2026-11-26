@@ -1,6 +1,6 @@
 ---
 name: setup-matt-pocock-skills
-description: "Configure this repo for the engineering skills: set up its issue tracker, triage label vocabulary, and domain doc layout. Run once before first use of the other engineering skills."
+description: "Configure this repo's issue tracker, triage labels, domain docs and shared glossary for the engineering skills."
 disable-model-invocation: true
 ---
 
@@ -11,6 +11,7 @@ Scaffold the per-repo configuration that the engineering skills assume:
 - **Issue tracker**: where issues live (GitHub by default; local markdown is also supported out of the box)
 - **Triage labels**: the strings used for the five canonical triage roles
 - **Domain docs**: where `GLOSSARY.md` and ADRs live, and the consumer rules for reading them
+- **Shared glossary**: the bundled starter vocabulary, even in repos without Excel
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
 
@@ -22,7 +23,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 
 - `git remote -v` and `.git/config`: is this a GitHub repo? Which one?
 - `AGENTS.md` and `CLAUDE.md` at the repo root: does either exist? Is there already an `## Agent skills` section in either?
-- `GLOSSARY.md` and `GLOSSARY-MAP.md` at the repo root, and the legacy `CONTEXT.md` / `CONTEXT-MAP.md`. If a legacy file exists, offer to `git mv` it to its `GLOSSARY` name and rewrite those names in `docs/agents/domain.md`.
+- `GLOSSARY.md` and `GLOSSARY-MAP.md` at the repo root, their mapped context glossaries, and the legacy `CONTEXT.md` / `CONTEXT-MAP.md`. If a legacy file exists, offer to `git mv` it to its `GLOSSARY` name and rewrite those names in `docs/agents/domain.md`. Base the glossary proposal on the layout after any separately approved rename; do not create a competing glossary over an unresolved legacy location.
 - `docs/adr/` and any `src/*/docs/adr/` directories
 - `docs/agents/`: does this skill's prior output already exist?
 - `.scratch/`: a sign that a local-markdown issue tracker convention is already in use
@@ -59,9 +60,9 @@ If it is installed, ask exactly one question:
 
 The defaults are the five canonical roles, each label string equal to its name: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. On **yes**, write them as-is. Only if the user says no, usually because their tracker already uses other names (e.g. `bug:triage` for `needs-triage`), collect the overrides so `triage` applies existing labels instead of creating duplicates.
 
-**Section C: Domain docs.** Default to **single-context** (one `GLOSSARY.md` + `docs/adr/` at the repo root). This fits almost every repo; write it without asking. If Section D turns wiki mode on, the ADR half of that layout is `wiki/decisions/` — write that path, not `docs/adr/`.
+**Section C: Domain docs.** Default to **single-context** (root `GLOSSARY.md` and `docs/adr/`) without asking a layout question. Record the layout in the draft `docs/agents/domain.md`; glossary changes require separate approval. If Section D turns wiki mode on, record `wiki/decisions/` instead of `docs/adr/`.
 
-Offer **multi-context** (a root `GLOSSARY-MAP.md` pointing to per-context `GLOSSARY.md` files) only when exploration found monorepo signals. Then confirm which layout they want.
+Preserve an existing `GLOSSARY-MAP.md` and its multi-context layout regardless of monorepo signals. Offer a new **multi-context** layout only when exploration found monorepo signals. Then confirm which layout they want.
 
 **Section D: Wiki mode.** Ask in every repo, including one with no `wiki/` yet — an LLM wiki is
 cheap to start and expensive to retrofit.
@@ -120,7 +121,11 @@ Show the user a draft of:
 
 Let them edit before writing.
 
+In every explicit run, follow the [shared glossary procedure](./shared-glossary-setup.md) from the start: load the bundle, compare the definitions and show the proposal. Keep glossary approval separate from the rest of setup.
+
 ### 4. Write
+
+Write only approved changes. Skip any setup file whose proposed contents are identical to its current contents.
 
 **Pick the file to edit:**
 
@@ -195,11 +200,13 @@ Then write the docs files using the seed templates in this skill folder as a sta
 - [triage-labels.md](./triage-labels.md): label mapping (only if `triage` is installed)
 - [domain.md](./domain.md): domain doc consumer rules + layout
 
+[Apply the approved glossary proposal](./shared-glossary-setup.md#apply).
+
 For "other" issue trackers, write `docs/agents/issue-tracker.md` from scratch using the user's description.
 
 ### 5. Done
 
-Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `docs/agents/*.md` directly later; re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
+Tell the user what setup changed and which engineering skills will read those files. The user can edit `docs/agents/*.md` directly later. Checking for shared glossary updates requires another explicit setup run.
 
 Before you say it's done, prove it — read back what you wrote and report the result, not the intention:
 
