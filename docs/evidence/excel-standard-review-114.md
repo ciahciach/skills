@@ -1,6 +1,6 @@
 # Próba review standardu Excel v1
 
-**Zakres:** #114. [Kanoniczna sekcja](../../skills/in-progress/setup-excel-repo/excel-standard.md) jest jedynym źródłem reguł. Poniżej są dane próby i wynik oceny, nie dodatkowy standard.
+**Zakres:** #114. [Kanoniczna sekcja](../../skills/engineering/setup-matt-pocock-skills/excel-standard.md) jest jedynym źródłem reguł. Poniżej są dane próby i wynik oceny, nie dodatkowy standard.
 
 ## Jak powtórzyć
 

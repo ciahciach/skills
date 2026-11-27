@@ -108,8 +108,8 @@ Off the main flow entirely.
 
 ## Precondition
 
-**`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels and domain docs, and start a shared glossary even without Excel. Rerun explicitly to review glossary updates.
+**`/setup-matt-pocock-skills`**: run before your first engineering flow to configure the issue tracker, triage labels, domain docs and shared glossary. Opt in to workbook versioning to include the Excel scaffold and standard in the same proposal, even before the first workbook. Rerun explicitly to review updates.
 
-**`/setup-excel-repo`** (optional beta): run it yourself to create or adopt an Excel versioning scaffold, even before the first workbook. It proposes the versioned Excel section in the project's `CODING_STANDARDS.md` for authors and the Standards axis of `code-review`. Use it standalone or after Matt's setup to reuse the repo's existing conventions. It is not shipped in the plugin.
+**`/setup-excel-repo`** (optional beta): run it yourself when you want only Excel versioning setup and any missing engineering minimum. It uses the same Excel procedure as Matt's opt-in and proposes the versioned Excel section in the project's `CODING_STANDARDS.md`. The standalone beta is not shipped in the plugin.
 
 **`excel-router`** (Kilo VS Code on Windows, optional beta): for workbook work rather than repo setup, load this skill first when available. It uses current exports or sufficient passive reads directly. For runtime or save it selects scoped interfaces by evidence or guides separately authorized synthetic qualification. If no route is allowed, it reports a blocker. It is not shipped in the plugin.

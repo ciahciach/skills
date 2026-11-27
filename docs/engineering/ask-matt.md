@@ -16,14 +16,14 @@ You invoke this by typing `/ask-matt`; the agent won't reach for it on its own.
 | A long session and a decision about the [context](https://www.aihero.dev/ai-coding-dictionary/context) | The ordered tree over the five options at a phase boundary |
 | One next step for an existing Issue, PR or workbook in this fork | Type `/co-dalej` in the Kilo checkout to inspect the current evidence without executing the recommendation |
 | A skill you have already picked | Nothing useful. Invoke that skill directly. |
-| A repo that needs Excel workbook versioning or the shared Excel review standard | The optional `/setup-excel-repo` beta, run by the user even if there is no workbook yet. It proposes the Excel section for `CODING_STANDARDS.md` so authors and reviewers use the same revision. |
+| A repo that needs Excel workbook versioning or the shared Excel review standard | Opt in during [setup](https://aihero.dev/skills-setup-matt-pocock-skills) to include Excel in one proposal, or explicitly run the standalone `/setup-excel-repo` beta for Excel and the missing engineering minimum. Neither needs a workbook. |
 | An Excel workbook task in Kilo VS Code on Windows | The optional `excel-router` beta, if available; it uses current exports or sufficient passive reads directly. For runtime or save, it uses scoped evidence or separately authorized synthetic qualification, otherwise it reports a blocker |
 
 ## Prerequisites
 
 The router names skills; it does not install them. Everything it points at has to be available in your [harness](https://www.aihero.dev/ai-coding-dictionary/harness) for the recommendation to be actionable.
 
-The tracker-dependent routes (triage, `to-spec`, `to-tickets`, `implement`) assume [setup-matt-pocock-skills](https://aihero.dev/skills-setup-matt-pocock-skills) has already configured an issue tracker in the repo. The router recommends them even before that has happened.
+The tracker-dependent routes (triage, `to-spec`, `to-tickets`, `implement`) assume the repo already has tracker guidance. Use [setup-matt-pocock-skills](https://aihero.dev/skills-setup-matt-pocock-skills) or, for a workbook versioning repo, the standalone Excel setup if that guidance is missing.
 
 ## Flows, not skills
 

@@ -1,10 +1,10 @@
 ## What it does
 
-`setup-matt-pocock-skills` answers three questions about one repo: where issues live, what the triage labels are called, and where the domain docs sit. It records the answers as markdown files under `docs/agents/`.
+`setup-matt-pocock-skills` records a repo's Issue tracker, triage labels and domain layout in markdown, using `docs/agents/` by default and preserving established locations. If you opt in to Excel versioning, it includes the Excel scaffold in the same proposal without requiring a second command or a workbook.
 
-The files vary by repo; the skills do not. They read `docs/agents/issue-tracker.md` at run time rather than assuming GitHub. This fork's setup also offers a root `GLOSSARY.md` with shared Issue tracker, Kilo Code in VS Code, Excel and general workflow terminology, even when the repo does not use Excel.
+The files vary by repo; the skills do not. They follow the repo's tracker guidance rather than assuming GitHub. This fork's setup also offers shared Issue tracker, Kilo Code in VS Code, Excel and general workflow terminology in the existing project glossary (default: root `GLOSSARY.md`), even when the repo does not use Excel.
 
-It is a prompt-driven skill, not a deterministic script. It reads your `git remote`, `CLAUDE.md` and `GLOSSARY.md`, proposes what it found, and waits for you to confirm before it writes anything.
+It is a prompt-driven skill, not a deterministic script. It reads your active instructions, glossary and Git remote, proposes changes and waits for you to confirm before it writes anything.
 
 ## When to reach for it
 
@@ -13,31 +13,34 @@ You invoke this by typing `/setup-matt-pocock-skills`; the [agent](https://www.a
 - Run it before the first use of an engineering skill that needs tracker and domain configuration, even if the project is already underway. For example, [triage](https://aihero.dev/skills-triage) should not have to guess your tracker or its labels.
 - Rerun it explicitly to review updates to the shared glossary. The skill reads the existing glossary and proposes only targeted changes.
 
-For Excel versioning, this skill can offer the separate `/setup-excel-repo` beta, even before the repo has a workbook. Opting in gives you the command to run yourself. This skill does not install it, invoke it, or change the Excel scaffold or workbook. The beta can also run standalone and configure the engineering guidance itself.
+- Opt in to Excel versioning to include the scaffold and the Excel section of `CODING_STANDARDS.md` in the same proposal, even before the first workbook. Opt-in selects the scope; applying the exact diff still requires approval. No workbook is created or registered.
+- Use the standalone `/setup-excel-repo` beta from the source checkout or a link to it if you want only Excel setup and the missing engineering minimum. Both keep existing repo conventions and use the same glossary and Excel standard.
 
 ## Prerequisites
 
 It writes into the repo you run it in:
 
-| It writes | Where |
+| It writes | Default location if not already configured |
 | --- | --- |
 | `issue-tracker.md` | `docs/agents/` |
 | `domain.md` | `docs/agents/` |
 | `GLOSSARY.md` and, for an existing map, a link in `GLOSSARY-MAP.md` | repo root, only for approved glossary changes |
 | `triage-labels.md` | `docs/agents/`, only when the `triage` skill is installed |
-| An `## Agent skills` block | whichever of `CLAUDE.md` or `AGENTS.md` already exists |
+| An `## Agent skills` block | the active instruction file, following any existing pointer to it |
+| Excel pointer, repo contract and shared Excel section | active instructions, existing runbook (default `docs/agents/excel.md`) and root `CODING_STANDARDS.md`, only after opt-in and diff approval |
 
 You commit all of it as markdown. There is no user-level or global mode. The config lives in the repo, so every repo gets its own copy.
 
-## The three decisions
+## Setup choices
 
-It starts each section with the recommended answer, and skips any question its exploration already answered. Most runs need only two confirmations.
+It keeps choices that are already established and recommends defaults when choices are missing. Excel is a separate, explicit opt-in.
 
 | Decision | What it proposes | When it asks |
 | --- | --- | --- |
-| **Issue tracker** | the one matching your `git remote` | always, because this is the one real choice |
+| **Issue tracker** | existing tracker, or one matching your `git remote` | when a tracker choice needs confirmation |
 | **Triage labels** | keep the five canonical names (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) | only if the `triage` skill is installed |
 | **Domain docs** | preserve an existing `GLOSSARY-MAP.md`; otherwise default to single-context | only if it spots monorepo signals and there is no map, and then it offers a multi-context layout |
+| **Excel setup** | include versioning guidance and the shared Excel standard | before proposing changes, even without a workbook |
 
 The tracker options:
 
@@ -77,20 +80,20 @@ In the proposal you can see:
 
 Only approved changes are written, with the bundled source and adopted version recorded for each shared entry.
 
-**It wrote to `CLAUDE.md`, but I'm on Codex.**
+**Which instruction file gets the links?**
 
-This is a known gap, and still open. The file-selection rule is "edit `CLAUDE.md` if it exists, else `AGENTS.md`". It checks which file exists, not which [harness](https://www.aihero.dev/ai-coding-dictionary/harness) is running. In a repo with a `CLAUDE.md` left over from Claude Code, the skill writes its `## Agent skills` block to a file Codex never reads. Users have two workarounds: move the block to `AGENTS.md` by hand, or keep `AGENTS.md` canonical and make `CLAUDE.md` a one-line pointer at it. If neither file exists, the skill asks you which to create instead of picking one. This has confused people who expected it to decide.
+The proposal targets the file your [harness](https://www.aihero.dev/ai-coding-dictionary/harness) reads, following any pointer to a canonical file. If neither file exists, the skill asks which to create. With Excel opt-in, both sets of links go into the same file.
 
 **It didn't create my triage labels.**
 
-It doesn't. `docs/agents/triage-labels.md` is a *mapping*: it tells `/triage` which strings in your tracker correspond to the five canonical roles. It does not run `gh label create`. On a fresh GitHub repo the labels do not exist yet, and users have filed this as a bug more than once. Two consequences:
+`docs/agents/triage-labels.md` is a *mapping*: it tells `/triage` which strings in your tracker correspond to the five canonical roles. On GitHub or GitLab, creating missing labels requires separate approval; approving the file diff is not enough. Two consequences:
 
 - If your tracker already uses the canonical names, the mapping is an identity table and there is nothing to configure. That is the intended common case, not a missing step.
 - This skill does not create [wayfinder](https://aihero.dev/skills-wayfinder)'s `wayfinder:map` and `wayfinder:<type>` labels either, and `gh issue create --label <missing>` fails instead of creating the label. Create them by hand before the first wayfinder run on a GitHub repo.
 
 **Can I configure the other skills' behaviour here ([grilling](https://www.aihero.dev/ai-coding-dictionary/grilling) cadence, question format, tone)?**
 
-No. It configures three things: tracker, labels, doc layout. Users have asked to make it the place for per-user preferences. The answer is that skills stay opinionated and take no per-user config. Preferences belong in your `CLAUDE.md` as plain instructions, which every skill already reads.
+No. It configures repo conventions, not individual skill preferences. The skills stay opinionated and take no per-user config. Preferences belong in the active instruction file as plain instructions.
 
 **Can I keep the config in `~/.claude` instead of committing it to every repo?**
 
@@ -102,10 +105,10 @@ One long-standing complaint says yes, in these words: *"having a skill to set up
 
 ## It's working if
 
-- `docs/agents/issue-tracker.md` and `docs/agents/domain.md` exist, plus `triage-labels.md` if `triage` is installed.
-- An `## Agent skills` section appears in the instruction file your harness reads, with a one-line summary pointing at each of those files.
+- An `## Agent skills` section in the instruction file your harness reads points to the active tracker and domain guides, plus the triage mapping if it is configured.
 - Adopted shared entries appear in a separate section. Unapproved definitions and existing context mappings are preserved, and a rerun with no approved changes leaves the glossary files untouched.
-- The tracker it proposed matches the remote you use, and the label strings match labels that exist in your tracker.
+- With Excel opt-in, you see one proposal, with separate approval for the glossary diff. Declining Excel leaves any existing Excel setup intact.
+- The tracker it proposed matches the one you use, and the label strings match labels that exist in your tracker or that you separately approve creating.
 - Afterwards, `/to-tickets` publishes without asking you where issues live, and `/triage` applies labels rather than inventing them.
 - Nothing in the skill files themselves changed. If setup edited a `SKILL.md`, something went wrong.
 
