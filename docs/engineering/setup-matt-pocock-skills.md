@@ -24,7 +24,7 @@ It writes into the repo you run it in:
 | --- | --- |
 | `issue-tracker.md` | `docs/agents/` |
 | `domain.md` | `docs/agents/` |
-| `GLOSSARY.md` and, for an existing map, a link in `GLOSSARY-MAP.md` | repo root, only for approved glossary changes |
+| Shared vocabulary and, when needed, a link from an existing `GLOSSARY-MAP.md` | the existing project glossary, or root `GLOSSARY.md` if none is established; separately approved |
 | `triage-labels.md` | `docs/agents/`, only when the `triage` skill is installed |
 | An `## Agent skills` block | the active instruction file, following any existing pointer to it |
 | Excel pointer, repo contract and shared Excel section | active instructions, existing runbook (default `docs/agents/excel.md`) and root `CODING_STANDARDS.md`, only after opt-in and diff approval |
@@ -69,12 +69,12 @@ No update runs setup for you. Run it explicitly to review new shared terms or pr
 
 What setup can propose depends on where the term lives:
 
-- In the root glossary, it can propose replacing a conflicting local definition. Without explicit approval, the local entry stays where it is.
+- In the existing project glossary, even if it lives outside the repo root, it can propose replacing a conflicting local definition. Without explicit approval, the local entry stays where it is. A new root `GLOSSARY.md` is only a default when there is no established glossary or unresolved legacy location.
 - In a mapped context, it leaves local definitions untouched. The context definition takes precedence there.
 
 In the proposal you can see:
 
-- Shared terms missing from the root `GLOSSARY.md`.
+- Shared terms missing from the project glossary.
 - The current and proposed versions of previously adopted entries that changed.
 - Both definitions when a local term conflicts with a shared one.
 
