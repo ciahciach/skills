@@ -1,0 +1,48 @@
+# Start one Power Query integration job
+
+This runbook awaits native acceptance for the new job path. Historical [#52 qualification](https://github.com/ciahciach/skills/pull/58) applies only to its one literal M edit with two worksheet-loaded queries. [#43](https://github.com/ciahciach/skills/issues/43#issuecomment-7141054050) is separate two-edit evidence. Do not use the job for customer workbooks, external sources, Data Model, A to B chaining, concurrent workers, or recovery. No skill installation or change to `/implement` routing is required.
+
+Use the candidate checkout for tools and a separate authorized synthetic project for job inputs. The dedicated merge in that synthetic project is the job trigger; this implementation PR need not merge for acceptance. This runbook grants no permission to create or merge a PR.
+
+Use Python 3.11 or later and `gh` with `api --paginate --slurp` support. The candidate checkout must contain the unchanged qualified router blob. The project checkout must have the exact source and merge commits plus the history connecting them.
+
+The dedicated PR must change only its new job marker. A PR that changes M as well is not a dedicated integration request.
+
+## Check The Current Handoff
+
+Before `start` or any access to a potentially affected workbook or Excel process, read the latest authorized operator handoff, including relevant router trial holds when a router attempt may be involved. This applies to passive profiling, hashing and readback as well as starting the workbook-free identity probe. Do not infer independence from a fresh worktree, an empty local ledger, `ready-for-desktop`, or the absence of a local job marker.
+
+If an earlier router or integration-job attempt may affect this input, copy, process, or operation, stop before access. If the latest handoff is missing or stale, or independence is unknown, stop as well. Resume this job only when the operator establishes independence or confirms reconciliation of the earlier owned process and affected copy. The authorized operator performs any necessary inspection; do not read back the affected copy or rerun a write to find out what happened. This is a safety prerequisite, not a second approval of the dedicated merge. It does not reopen an interrupted job or establish a permanent method exclusion.
+
+If this job leaves an unresolved effect, keep the hold and hand off its redacted status and required reconciliation to affected operators, including anyone continuing in the router or another worktree. Verify that the next operator can read it at the agreed authorized destination. If there is no such destination, notify the operator of the blocker and keep work stopped. The hold applies to potentially affected work even if it was never entered into a ledger or is only recorded in private job state. Do not publish private paths, workbook contents or raw diagnostics.
+
+Router-ledger trial labels and the job's pinned router scope and method labels are different exact-match contracts. Read the handoff for unresolved effects; do not translate, replay or import ledger rows as qualification or exclusions for this job. The job selects against its pinned, independently applicable #52 evidence and has no ledger dependency or shared schema.
+
+## Run The Job
+
+Use the passive `export --power-query` workflow from the [pinned repository contract][pq-pilot-contract] to review and accept the initial sync for the synthetic base. Supply its unchanged reviewed export directory as `<baseline>` and the approved external store as `<sync-store>`. The job reads and checks that sync but never advances it.
+
+1. Arrange separate authorization for candidate-native acceptance. Retain a genuine #52 synthetic base from authorized fixture preparation. If none is retained, fixture creation is separate: it populates the two literal tables, and requires separate permission for that refresh. Ensure the local base is ignored, untracked, ACL-protected, and not open. Use its SHA-256 for both the input version and input SHA-256. Keep the private state directory outside both Git checkouts. Restrict it to the trusted intake and the controlled desktop operator. The operator guarantees that no second host, session, or process can write for the job; a label, a worktree, and the command flag cannot establish that guarantee.
+2. Commit the existing-query export `excel/power-query.json` in the synthetic project, in the format from the [pinned repository contract][pq-pilot-contract]. For the #52 fixture, change only `PilotLoaded` to its qualified literal edit and leave `PilotNeighbor` unchanged. Land the proposal on `main` first and pin the full SHA actually landed there, not the source branch SHA rewritten by squash or rebase. Hash the exact proposal blob at that commit. Open a dedicated integration PR adding `excel/integration-jobs/<pr-number>.json` with `issue` (execution Issue number), `source_sha`, `proposal_sha256`, `input_version`, and `input_sha256`. GitHub must report the marker as an addition in that PR. The marker must exist at the exact merge SHA, and the pinned source must be its ancestor. Have an authorized human merge the dedicated PR to `main`. The merge is the authorization; there is no second approval prompt.
+3. A separately configured trusted delivery may pipe a GitHub closed-PR event to `intake` on stdin (omit `--pr`). This slice does not install a notification transport, watcher, or polling. To check acceptance, reconcile each merged PR with the command below from the candidate checkout using Git and authenticated `gh`. `<trusted-login>` comes from the repository authorization policy, not the notification or Issue. A normal M-only PR must yield `no integration job`, even if it inherits a previous marker. Running intake twice for the dedicated PR must return the same job ID. Intake reads authoritative PR metadata and exact local Git objects without opening Excel or updating the tracker. An authorized tracker operator can project the job ID and `ready-for-desktop` onto its execution Issue. The label is informational, and the job persists even if the Issue cannot be updated.
+
+```powershell
+python -B -X utf8 scripts/excel_pq_job.py --state <private-state> intake --repo <project> --repository <owner/repo> --pr <pr> --authorized-merger <trusted-login>
+```
+
+4. Manually start from the execution Issue with `/implement` in Kilo Code in VS Code on the logged-in Windows desktop. The Issue identifies the job and this procedure; do not invoke the unreleased Excel skill. The eligible route is direct COM, Excel `16.0 build 20527.0` and pywin32 `312`, with no fallback. Recheck the [current handoff](#check-the-current-handoff) before running either form of `start`. First omit `--controlled-one-writer` and verify a block. With the one-writer boundary established, use the command below. The identity phase starts Excel without opening a workbook. A clean version mismatch leaves the job waiting. An unresolved probe or any error after `.started.json` requires inspection and no retry in this slice. A timeout before Excel attaches to its Windows Job Object does not prove it stopped. Keep the state and hand off any unresolved effect as described above.
+
+```powershell
+python -B -X utf8 scripts/excel_pq_job.py --state <private-state> start --job <job> --issue <issue> --repo <project> --input <local-synthetic-xlsx> --sync-store <sync-store> --baseline <baseline> --controlled-one-writer
+```
+
+5. Independently hash the base and verified output. Confirm the unchanged base, one save on a separate copy, independent read-only reopen plus passive package comparison, and both unchanged load destinations. Record the configured opening controls and whether the original cached values remained; do not claim runtime monitoring or network isolation. Duplicate start must block even if the Issue still says ready. The private output location is written to stderr, not to the report. Do not publish terminal output, private state, or a workbook. Do not accept the copy as a new base.
+6. Simulate an unavailable publication destination. Re-run only the command below. Compare the redacted report and output SHA-256 to the original without reopening the workbook; no second save should occur. If separately authorized, post the report or its durable link to the execution Issue. After an uncertain posting response, check the destination before posting again. The Issue is never the execution store.
+
+```powershell
+python -B -X utf8 scripts/excel_pq_job.py --state <private-state> publish --job <job>
+```
+
+Record outcomes against the exact candidate SHA and this runbook revision. The [evidence template](pq-integration-evidence.md) is shared by synthetic and real integrations; set the mode and claim limit to what was actually proven. Real use requires its own applicable qualification and is not enabled by this job. Verification and owner acceptance are separate. Report the observations, or the exact blocker and missing proof, to the designated recorder for #123.
+
+[pq-pilot-contract]: https://github.com/ciahciach/skills/blob/45ed737f330a9b4dfd4a9ad6f43fa631bdf6313e/skills/in-progress/setup-excel-repo/repo-contract.md#power-query-xlsx-pilot

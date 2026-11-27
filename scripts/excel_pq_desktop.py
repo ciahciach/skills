@@ -21,18 +21,21 @@ EDITED_M = '#table(type table [N = number], {{2}})'
 NEIGHBOR_M = '#table(type table [N = number], {{9}})'
 
 
-def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
+def run(action: str, path: Path, approved_sha: str,
+        expected_runtime: dict[str, str] | None = None) -> dict[str, Any]:
     candidate = ('private', 'candidates', LABEL, 'workbook.xlsx')
     noop = ('noop', 'workbook.xlsx')
     layouts: dict[str, set[tuple[str, ...]]] = {'create': {('fixture', 'base.xlsx')}, 'noop': {noop},
                                                 'save': {candidate}, 'reopen': {noop, candidate}}
     prefix = Path(tempfile.gettempdir()).resolve() / 'kilo'
-    relative = path.relative_to(prefix).parts
-    if (len(relative) < 2 or not relative[0].startswith('pq-pilot-') or path.resolve() != path
-            or relative[1:] not in layouts[action]):
-        raise ValueError('Expected a fresh synthetic pilot path.')
+    probe = action == 'identity'
+    if not probe:
+        relative = path.relative_to(prefix).parts
+        if (len(relative) < 2 or not relative[0].startswith('pq-pilot-') or path.resolve() != path
+                or relative[1:] not in layouts[action]):
+            raise ValueError('Expected a fresh synthetic pilot path.')
     lock = path.with_name('~$' + path.name)
-    if lock.exists() or (action == 'create' and path.exists()):
+    if not probe and (lock.exists() or (action == 'create' and path.exists())):
         raise RuntimeError('Workbook is locked or already exists.')
 
     def digest() -> str:
@@ -44,9 +47,9 @@ def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
     def step(message: str) -> None:
         print(message, file=sys.stderr, flush=True)
 
-    if action != 'create' and digest() != approved_sha:
+    if action not in ('create', 'identity') and digest() != approved_sha:
         raise RuntimeError('Workbook no longer matches the supplied SHA-256.')
-    if action != 'create':
+    if not probe and action != 'create':
         attempt = prefix / relative[0]
         phases = json.loads((attempt / 'report.json').read_bytes())['phases']
         approval = phases['plan']
@@ -66,6 +69,8 @@ def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
 
     step('check desktop runtime')
     backend = version('pywin32')
+    if not probe and expected_runtime is not None and expected_runtime['pywin32'] != backend:
+        raise RuntimeError('The installed pywin32 does not match the qualified runtime.')
     client = import_module('win32com.client')
     api = import_module('win32api')
     jobs = import_module('win32job')
@@ -97,7 +102,13 @@ def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
 
         step('configure Excel opening effects')
         runtime = {'excel': f'{app.Version} build {app.Build}', 'pywin32': backend}
+        if probe:
+            return {'runtime': runtime}
+        if expected_runtime is not None and runtime != expected_runtime:
+            raise RuntimeError('Excel does not match the qualified runtime; no workbook was opened.')
         observed: dict[str, Any] = {'runtime': runtime}
+        if expected_runtime is not None:
+            observed['session'] = uuid4().hex
         app.Visible = False
         app.DisplayAlerts = False
         app.ScreenUpdating = False
@@ -160,6 +171,13 @@ def run(action: str, path: Path, approved_sha: str) -> dict[str, Any]:
                     observed.update(readOnly=True, b6=value, loadRange='Odbior!B5:B6',
                                     connection=table.QueryTable.WorkbookConnection.Name,
                                     queries={query.Name: query.Formula.strip() for query in book.Queries})
+                    if expected_runtime is not None:
+                        neighbor = sheet.ListObjects('PilotNeighborTable')
+                        if sheet.Range('E6').Value2 != 9 or len(book.Connections) != 2:
+                            raise RuntimeError('Native reopen did not preserve the neighboring worksheet load.')
+                        observed['wiring'] = [item for load in (table, neighbor) for item in
+                                              (load.Name, f'{sheet.Name}!{load.Range.Address.replace("$", "")}',
+                                               load.QueryTable.WorkbookConnection.Name)]
                 else:
                     step('save disposable copy')
                     if book.AutoSaveOn:
@@ -196,8 +214,11 @@ if __name__ == '__main__':
     if isinstance(sys.stdout, TextIOWrapper):
         sys.stdout.reconfigure(encoding='utf-8')
     try:
-        action, filename, expected_sha = sys.argv[1:]
-        print(json.dumps(run(action, Path(filename), expected_sha)))
+        action, filename, expected_sha, *guard = sys.argv[1:]
+        if ((guard and (len(guard) != 1 or action not in ('identity', 'save', 'reopen')))
+                or (action == 'identity' and not guard)):
+            raise ValueError('Expected the runtime guard for identity, formula save or independent reopen.')
+        print(json.dumps(run(action, Path(filename), expected_sha, json.loads(guard[0]) if guard else None)))
     except Exception as error:
         print(f'{type(error).__name__}: {error}', file=sys.stderr)
         raise SystemExit(1)
