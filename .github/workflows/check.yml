@@ -60,4 +60,7 @@ jobs:
       - name: Typecheck Excel scripts and tests
         if: ${{ !cancelled() && steps.install-mypy.outcome == 'success' }}
         timeout-minutes: 2
-        run: python -X utf8 -m mypy --check-untyped-defs scripts/excel-onboarding.py scripts/excel_power_query.py scripts/test_excel_onboarding.py
+        run: >-
+          python -X utf8 -m mypy --check-untyped-defs scripts/excel-onboarding.py
+          scripts/excel_power_query.py scripts/test_excel_onboarding.py
+          skills/in-progress/excel-router/route.py scripts/test_excel_router.py
