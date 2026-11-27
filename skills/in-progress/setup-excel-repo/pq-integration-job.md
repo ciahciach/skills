@@ -8,6 +8,18 @@ Use Python 3.11 or later and `gh` with `api --paginate --slurp` support. The can
 
 The dedicated PR must change only its new job marker. A PR that changes M as well is not a dedicated integration request.
 
+## Check The Current Handoff
+
+Before `start` or any access to a potentially affected workbook or Excel process, read the latest authorized operator handoff, including relevant router trial holds when a router attempt may be involved. This applies to passive profiling, hashing and readback as well as starting the workbook-free identity probe. Do not infer independence from a fresh worktree, an empty local ledger, `ready-for-desktop`, or the absence of a local job marker.
+
+If an earlier router or integration-job attempt may affect this input, copy, process, or operation, stop before access. If the latest handoff is missing or stale, or independence is unknown, stop as well. Resume this job only when the operator establishes independence or confirms reconciliation of the earlier owned process and affected copy. The authorized operator performs any necessary inspection; do not read back the affected copy or rerun a write to find out what happened. This is a safety prerequisite, not a second approval of the dedicated merge. It does not reopen an interrupted job or establish a permanent method exclusion.
+
+If this job leaves an unresolved effect, keep the hold and hand off its redacted status and required reconciliation to affected operators, including anyone continuing in the router or another worktree. Verify that the next operator can read it at the agreed authorized destination. If there is no such destination, notify the operator of the blocker and keep work stopped. The hold applies to potentially affected work even if it was never entered into a ledger or is only recorded in private job state. Do not publish private paths, workbook contents or raw diagnostics.
+
+Router-ledger trial labels and the job's pinned router scope and method labels are different exact-match contracts. Read the handoff for unresolved effects; do not translate, replay or import ledger rows as qualification or exclusions for this job. The job selects against its pinned, independently applicable #52 evidence and has no ledger dependency or shared schema.
+
+## Run The Job
+
 Use the passive `export --power-query` workflow from the [repository contract](repo-contract.md#power-query-xlsx-pilot) to review and accept the initial sync for the synthetic base. Supply its unchanged reviewed export directory as `<baseline>` and the approved external store as `<sync-store>`. The job reads and checks that sync but never advances it.
 
 1. Arrange separate authorization for candidate-native acceptance. Retain a genuine #52 synthetic base from authorized fixture preparation. If none is retained, fixture creation is separate: it populates the two literal tables, and requires separate permission for that refresh. Ensure the local base is ignored, untracked, ACL-protected, and not open. Use its SHA-256 for both the input version and input SHA-256. Keep the private state directory outside both Git checkouts. Restrict it to the trusted intake and the controlled desktop operator. The operator guarantees that no second host, session, or process can write for the job; a label, a worktree, and the command flag cannot establish that guarantee.
@@ -18,7 +30,7 @@ Use the passive `export --power-query` workflow from the [repository contract](r
 python -B -X utf8 scripts/excel_pq_job.py --state <private-state> intake --repo <project> --repository <owner/repo> --pr <pr> --authorized-merger <trusted-login>
 ```
 
-4. Manually start from the execution Issue with `/implement` in Kilo Code in VS Code on the logged-in Windows desktop. The Issue identifies the job and this procedure; do not invoke the unreleased Excel skill. The eligible route is direct COM, Excel `16.0 build 20527.0` and pywin32 `312`, with no fallback. First omit `--controlled-one-writer` and verify a block. With the one-writer boundary established, use the command below. The identity phase starts Excel without opening a workbook. A clean version mismatch leaves the job waiting. An unresolved probe or any error after `.started.json` requires inspection and no retry in this slice. A timeout before Excel attaches to its Windows Job Object does not prove it stopped. Do not delete state or retry the write.
+4. Manually start from the execution Issue with `/implement` in Kilo Code in VS Code on the logged-in Windows desktop. The Issue identifies the job and this procedure; do not invoke the unreleased Excel skill. The eligible route is direct COM, Excel `16.0 build 20527.0` and pywin32 `312`, with no fallback. Recheck the [current handoff](#check-the-current-handoff) before running either form of `start`. First omit `--controlled-one-writer` and verify a block. With the one-writer boundary established, use the command below. The identity phase starts Excel without opening a workbook. A clean version mismatch leaves the job waiting. An unresolved probe or any error after `.started.json` requires inspection and no retry in this slice. A timeout before Excel attaches to its Windows Job Object does not prove it stopped. Keep the state and hand off any unresolved effect as described above.
 
 ```powershell
 python -B -X utf8 scripts/excel_pq_job.py --state <private-state> start --job <job> --issue <issue> --repo <project> --input <local-synthetic-xlsx> --sync-store <sync-store> --baseline <baseline> --controlled-one-writer
