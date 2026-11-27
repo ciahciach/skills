@@ -92,7 +92,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 from zipfile import BadZipFile, ZipFile
@@ -1723,18 +1723,24 @@ def vba_readback(raw, expected_sha, stage, workbook_sha, hosts):
     record = json.loads(raw, object_pairs_hook=unique_json_object)
     fields = {'workbookSha256', 'stage', 'evidence', 'projectPolicy', 'complete',
               'referencesSha256', 'projectMetadataSha256', 'modules'}
-    if (sha(raw) != expected_sha or not isinstance(record, dict) or set(record) != fields or record['stage'] != stage
+    if (sha(raw) != expected_sha or not isinstance(record, dict) or set(record) - {'projectId'} != fields
+            or record['stage'] != stage
             or record['workbookSha256'] != workbook_sha or not EVIDENCE_REF.fullmatch(record['evidence'])
             or CREDENTIAL.search(record['evidence'])):
         raise Blocked('A pinned VBA readback must identify its exact saved workbook and stage.')
     if record['projectPolicy'] != 'editable-unsigned' or record['complete'] is not True:
         raise Blocked('VBA project is protected, restricted, or not fully observable. No bypass is permitted.')
+    project_id = record.get('projectId')
+    if (not isinstance(project_id, str)
+            or not re.fullmatch(r'\{[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\}', project_id)
+            or not UUID(project_id).int):
+        raise Blocked('A nonzero saved VBA ProjectId is required in the pinned ProjectId evidence.')
     if any(not SHA.fullmatch(record[key]) for key in ('referencesSha256', 'projectMetadataSha256')):
         raise Blocked('VBA project or reference evidence is missing.')
     modules = vba_modules(record['modules'], metadata=True)
     if {name for name, module in modules.items() if module['kind'] == 'document'} != hosts:
         raise Blocked('Document module inventory does not match the saved workbook and worksheet code names.')
-    return modules, (record['referencesSha256'], record['projectMetadataSha256']), record['evidence']
+    return modules, (record['referencesSha256'], record['projectMetadataSha256']), record['evidence'], UUID(project_id)
 
 
 def vba_modules(modules, *, metadata=False):
@@ -1800,8 +1806,8 @@ def vba_workflow(root, store, args):
     if args.command == 'vba-export':
         snapshot_path = repo_path(store, args.snapshot)
         require_private(snapshot_path.parent, snapshot_path)
-        modules, _, evidence = vba_readback(read_bounded(snapshot_path, MAX_XML), args.snapshot_sha256,
-                                            'baseline-reopen', version, hosts)
+        modules, _, evidence, _ = vba_readback(read_bounded(snapshot_path, MAX_XML), args.snapshot_sha256,
+                                              'baseline-reopen', version, hosts)
         if (live != base or read_bounded(source, MAX_PACKAGE) != live or read_bounded(sync_file, MAX_XML) != sync_bytes
                 or source.with_name('~$' + source.name).exists()):
             raise Blocked('VBA baseline export requires the exact saved retained base.')
@@ -1837,8 +1843,8 @@ def vba_workflow(root, store, args):
             or any(not EVIDENCE_REF.fullmatch(route[key]) or CREDENTIAL.search(route[key]) for key in fields)):
         raise Blocked('Desktop route evidence does not match qualification, authorization or current inputs.')
     snapshot_sha = route['baselineSnapshotSha256']
-    modules, project, baseline_evidence = vba_readback(read_bounded(baseline_file, MAX_XML), snapshot_sha,
-                                                       'baseline-reopen', version, hosts)
+    modules, project, baseline_evidence, project_id = vba_readback(read_bounded(baseline_file, MAX_XML), snapshot_sha,
+                                                                  'baseline-reopen', version, hosts)
     baseline_manifest = vba_export_artifacts(sync, modules, snapshot_sha, baseline_evidence)['manifest.json']
     if args.reviewed_vba != sha(baseline_manifest):
         raise Blocked('The desktop baseline does not match the reviewed VBA export manifest.')
@@ -1878,10 +1884,13 @@ def vba_workflow(root, store, args):
             or noop_copy.stat().st_nlink != 1):
         raise Blocked('Expected an unlocked and separate no-op XLSM copy in private storage.')
     noop = read_bounded(noop_copy, MAX_PACKAGE)
-    noop_modules, noop_project, noop_evidence = vba_readback(read_bounded(noop_snapshot, MAX_XML),
-                                                            route['noOpSnapshotSha256'], 'noop-reopen', sha(noop), hosts)
-    if (route['noOpSha256'] != sha(noop) or route['noOpSave'] == noop_evidence
-            or (noop_modules, noop_project) != (modules, project)
+    noop_modules, noop_project, noop_evidence, noop_id = vba_readback(
+        read_bounded(noop_snapshot, MAX_XML), route['noOpSnapshotSha256'], 'noop-reopen', sha(noop), hosts)
+    if route['noOpSha256'] != sha(noop) or route['noOpSave'] == noop_evidence:
+        raise Blocked('The no-op save/reopen evidence does not identify the saved copy and separate reopen.')
+    if noop_id != project_id:
+        raise Blocked('No-op save/reopen changed VBA ProjectId.')
+    if ((noop_modules, noop_project) != (modules, project)
             or not preserved(noop, noop_copy.parent)):
         raise Blocked('No-op save/reopen did not preserve workbook contents or VBA project identity.')
     plan = {'operation': VBA_OPERATION, 'profile': VBA_PROFILE, 'candidate': args.label,
@@ -1889,7 +1898,7 @@ def vba_workflow(root, store, args):
             'syncSha256': sha(sync_bytes), 'editSha256': sha(edit), 'routeSha256': args.route_sha256,
             'reviewedVbaSha256': args.reviewed_vba, 'noOpSha256': sha(noop), 'changedModules': changed,
             'checks': ['module source and identity', 'workbook and worksheet host code names', 'references',
-                       'project topology', 'adjacent workbook parts'], 'runMacros': False, 'refresh': False}
+                       'ProjectId', 'project topology', 'adjacent workbook parts'], 'runMacros': False, 'refresh': False}
     approval = sha(json_bytes(plan))
     if args.command == 'vba-plan':
         print(json_bytes({**plan, 'planSha256': approval}).decode('utf-8'), end='')
@@ -1909,9 +1918,13 @@ def vba_workflow(root, store, args):
             or CREDENTIAL.search(args.save_evidence)):
         raise Blocked('A matching preparation receipt and separate desktop save evidence are required.')
     result = read_bounded(candidate, MAX_PACKAGE)
-    observed, observed_project, evidence = vba_readback(read_bounded(reopened, MAX_XML), args.reopened,
-                                                        'candidate-reopen', sha(result), hosts)
-    if (args.saved != sha(result) or evidence == args.save_evidence or vba_package(result)[0] == live_project
+    observed, observed_project, evidence, observed_id = vba_readback(
+        read_bounded(reopened, MAX_XML), args.reopened, 'candidate-reopen', sha(result), hosts)
+    if args.saved != sha(result) or evidence == args.save_evidence:
+        raise Blocked('The candidate save/reopen evidence does not identify the saved copy and separate reopen.')
+    if observed_id != project_id:
+        raise Blocked('Saved copy changed VBA ProjectId.')
+    if (vba_package(result)[0] == live_project
             or not preserved(result, attempt)
             or vba_source(observed)['modules'] != desired or observed_project != project
             or {name: row['metadataSha256'] for name, row in observed.items()}
@@ -1924,6 +1937,8 @@ def vba_workflow(root, store, args):
     report = {'kind': 'private-vba-copy-verification', 'workbook': sync['workbook'], 'retainedSha256': version,
               'candidateSha256': sha(result), 'planSha256': approval, 'reopenSnapshotSha256': args.reopened,
               'checks': {'noOpPreservation': 'VERIFIED_AGAINST_ATTESTED_READBACK',
+                         'projectId': 'UNCHANGED_AGAINST_ATTESTED_READBACK',
+                         'typeLibraryConsumerCompatibility': 'NOT_VERIFIED',
                          'reExport': 'VERIFIED_AGAINST_ATTESTED_READBACK', 'macrosExecutedByCli': False,
                          'vbeCompilation': 'NOT_RUN', 'fixtureScenario': 'NOT_RUN'},
               'operatorAttestations': {'routeSha256': args.route_sha256, 'openingControls': VBA_CONTROLS,

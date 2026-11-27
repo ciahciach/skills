@@ -531,10 +531,14 @@ class OnboardingTest(unittest.TestCase):
                    for name, kind in [('Module1', 'standard'), ('Class1', 'class'),
                                       ('Sheet1', 'document'), ('ThisWorkbook', 'document'), ('Neighbor', 'standard')]}
 
+        project_id = '{12345678-1234-4321-ABCD-123456789012}'
+        changed_id = '{87654321-4321-1234-ABCD-123456789012}'
+
         def snapshot(workbook_sha, stage, observed_modules):
             return json.dumps({'workbookSha256': workbook_sha, 'stage': stage, 'evidence': f'fixture {stage}',
                                'projectPolicy': 'editable-unsigned', 'complete': True,
                                'referencesSha256': '2' * 64, 'projectMetadataSha256': '3' * 64,
+                               'projectId': project_id,
                                'modules': observed_modules}).encode()
 
         original = snapshot(version, 'baseline-reopen', modules)
@@ -544,6 +548,18 @@ class OnboardingTest(unittest.TestCase):
         error = self.cli('vba-export', 'baseline', 'vba-base', '--snapshot', evidence.name,
                          '--snapshot-sha256', digest(blocked), ok=False)
         self.assertIn('VBA project is protected', error)
+        for invalid in (None, 42, 'not-a-guid', '{00000000-0000-0000-0000-000000000000}'):
+            with self.subTest(projectId=invalid):
+                record = json.loads(original)
+                if invalid is None:
+                    del record['projectId']
+                else:
+                    record['projectId'] = invalid
+                blocked = json.dumps(record).encode()
+                evidence.write_bytes(blocked)
+                error = self.cli('vba-export', 'baseline', 'vba-base', '--snapshot', evidence.name,
+                                 '--snapshot-sha256', digest(blocked), ok=False)
+                self.assertIn('ProjectId evidence', error)
         secret = b'ghp_' + b'x' * 30
         blocked = original.replace(b'Option Explicit', secret)
         evidence.write_bytes(blocked)
@@ -584,8 +600,18 @@ class OnboardingTest(unittest.TestCase):
         error = self.cli('vba-plan', *base_args, '--reviewed-vba', '0' * 64, ok=False)
         self.assertIn('does not match the reviewed VBA export', error)
         args = (*base_args, *reviewed)
+        bad_noop = noop.replace(project_id.encode(), changed_id.encode())
+        bad_route = json.dumps({**json.loads(route), 'noOpSnapshotSha256': digest(bad_noop)}).encode()
+        bad_routes = routes.with_name(digest(bad_route))
+        bad_routes.mkdir(mode=0o700)
+        for name, content in {'route.json': bad_route, 'baseline.json': original, 'noop.json': bad_noop}.items():
+            (bad_routes / name).write_bytes(content)
+        error = self.cli('vba-plan', 'baseline', edit.name, 'change', '--route-sha256', digest(bad_route),
+                         *reviewed, ok=False)
+        self.assertIn('No-op save/reopen changed VBA ProjectId', error)
         plan = json.loads(self.cli('vba-plan', *args))
         self.assertEqual(plan['changedModules'], ['Class1', 'Module1', 'Sheet1'])
+        self.assertIn('ProjectId', plan['checks'])
         self.assertFalse((self.store / 'candidates').exists())
         approval = ('--approved-plan', plan['planSha256'])
         approved_edit = edit.read_bytes()
@@ -603,14 +629,24 @@ class OnboardingTest(unittest.TestCase):
         edited_modules = {name: {**module, 'source': '\n'.join(proposed['modules'][name]['source'])}
                           for name, module in modules.items()}
         reopened = candidate.with_name('reopen.json')
+        raw = snapshot(saved, 'candidate-reopen', edited_modules).replace(project_id.encode(), changed_id.encode())
+        reopened.write_bytes(raw)
+        error = self.cli('vba-verify', *args, *approval, '--reopened', digest(raw), '--saved', saved,
+                         '--save-evidence', 'fixture candidate save', ok=False)
+        self.assertIn('Saved copy changed VBA ProjectId', error)
+        self.assertNotIn(project_id, error)
+        self.assertNotIn(changed_id, error)
+        self.assertFalse((self.store / 'review/change').exists())
         bad = {**edited_modules, 'Sheet1': {**edited_modules['Sheet1'], 'metadataSha256': '4' * 64}}
         for observed, ok in ((bad, False), (edited_modules, True)):
-            raw = snapshot(saved, 'candidate-reopen', observed)
+            raw = snapshot(saved, 'candidate-reopen', observed).replace(project_id.encode(), project_id.lower().encode())
             reopened.write_bytes(raw)
             self.cli('vba-verify', *args, *approval, '--reopened', digest(raw), '--saved', saved,
                      '--save-evidence', 'fixture candidate save', ok=ok)
             self.assertEqual((self.store / 'review/change').exists(), ok)
         verified = json.loads((self.store / 'review/change/manifest.json').read_bytes())
+        self.assertEqual(verified['checks']['projectId'], 'UNCHANGED_AGAINST_ATTESTED_READBACK')
+        self.assertEqual(verified['checks']['typeLibraryConsumerCompatibility'], 'NOT_VERIFIED')
         self.assertEqual(verified['checks']['vbeCompilation'], 'NOT_RUN')
         self.assertEqual(verified['checks']['fixtureScenario'], 'NOT_RUN')
         self.assertFalse(verified['checks']['macrosExecutedByCli'])
