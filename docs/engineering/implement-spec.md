@@ -46,6 +46,10 @@ Implementers talk to the orchestrator through [context pointers](https://www.aih
 
 ## Common questions
 
+**Why is my PR still a draft?**
+
+The worker names the issue criterion, required check or review still missing, and continues on the same PR when it can. Optional regression results and later release acceptance are reported separately; they do not keep an issue's PR in draft. A ready PR still needs a human merge.
+
 **Where does my manual test result go if the Kilo session disappears?**
 
 Report the result in Kilo. The agreed recorder saves it as a human-reported result on the issue or in agreed shared storage, with a reference a successor can open. The coordinator agrees that destination and write permission before requesting the test. You do not need to post it again yourself. Recording the result neither publishes code nor closes the issue.
