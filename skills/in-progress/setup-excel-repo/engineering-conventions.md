@@ -4,7 +4,7 @@ Use the same discovery files as Matt's engineering skills. Reuse the contents of
 
 ## Root Instructions
 
-Keep `AGENTS.md` (or the harness's active file) short. Under `## Agent skills`, link the actual authoritative files for tracker operations, triage roles, and terminology and ADRs. Reuse an existing section. For missing guidance, the defaults are `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and `docs/agents/domain.md`. If a consumer requires a default path but the guidance already lives elsewhere, add only a pointer at that path, not a copy. Add a separate Excel pointer for onboarding, export, formula review, editing and controlled import. The Excel contract belongs in `docs/agents/excel.md` or the existing runbook; the glossary defines terms, not procedures.
+Keep `AGENTS.md` (or the harness's active file) short. Under `## Agent skills`, link the actual authoritative files for tracker operations, triage roles, and terminology and ADRs. Reuse an existing section. For missing guidance, the defaults are `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and `docs/agents/domain.md`. If a consumer requires a default path but the guidance already lives elsewhere, add only a pointer at that path, not a copy. The glossary defines terms, not procedures.
 
 ## Tracker Seed
 
@@ -19,10 +19,12 @@ For a new `docs/agents/triage-labels.md`, document the five roles and their mapp
 
 ## Domain Seed
 
+Use the [shared glossary procedure](../../engineering/setup-matt-pocock-skills/shared-glossary-setup.md) for the glossary portion, including discovery and separate approval. Do not apply the rest of Matt's setup.
+
 For a new single-context repo without an existing wiki, write `docs/agents/domain.md` with these rules:
 
 - Read root `GLOSSARY.md` for vocabulary and relevant ADRs from `docs/adr/` before work in that domain. If a `GLOSSARY-MAP.md` exists, follow it to the relevant glossary instead. Use established terms and flag a proposed change that contradicts an ADR.
-- Create `GLOSSARY.md` when the first domain term is agreed. Create `docs/adr/NNNN-<slug>.md` when a real decision warrants an ADR; start at `0001` or use the next number. Create the directory then, not at setup. Use `docs/agents/grill/` for interview ledgers when needed.
+- Add domain terms to the same glossary as they are agreed. Create `docs/adr/NNNN-<slug>.md` when a real decision warrants an ADR; start at `0001` or use the next number. Create the directory then, not at setup. Use `docs/agents/grill/` for interview ledgers when needed.
 - Tracker artifacts and domain knowledge have distinct homes. Link a decision or ticket rather than keeping a second copy. Do not create an empty glossary, an example ADR, an empty tracker directory or an unused wiki.
 
-When a wiki or multi-context layout is already in use, document its actual paths and keep its ADR index, naming and governance. Do not migrate it to these defaults. When recording existing wiki mode in a new domain doc, use `## Wiki mode` and link the existing ledger and decisions locations.
+For any existing domain layout, document the actual paths and keep its ADR index, naming and governance. Do not migrate it to these defaults. When recording existing wiki mode in a new domain doc, use `## Wiki mode` and link the existing ledger and decisions locations.

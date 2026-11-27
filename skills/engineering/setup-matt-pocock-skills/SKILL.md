@@ -37,38 +37,40 @@ Summarise what's present and what's missing. Then take the sections in order. On
 
 Lead each section with the recommended answer so the user can accept it in a word. Give a one-line explainer only when the choice genuinely branches; skip the section entirely when exploration already settled it (Section B when `triage` isn't installed, Section C when there's no monorepo).
 
+Keep established tracker, triage, wiki, glossary and ADR conventions unless the user explicitly requests a change. Follow existing pointers to their authoritative homes rather than creating competing copies. Surface any unresolved conflicts and omit dependent edits from the proposal.
+
 **Section A: Issue tracker.**
 
 > Explainer: The "issue tracker" is where issues live for this repo. Skills like `to-tickets`, `triage`, and `to-spec` read from and write to it. They need to know whether to call `gh issue create`, write a markdown file under `.scratch/`, or follow some other workflow you describe. Pick the place you actually track work for this repo.
 
-Default posture: these skills were designed for GitHub. If a `git remote` points at GitHub, propose that. If a `git remote` points at GitLab (`gitlab.com` or a self-hosted host), propose GitLab. Otherwise (or if the user prefers), offer:
+Recommend the established Issue tracker, even when `git remote` points to a different service. Only if there is no established tracker, use the remote as a hint for GitHub or GitLab (`gitlab.com` or a self-hosted host). For a fresh repo without a tracker or remote, recommend Local Markdown. Offer alternatives when no choice is established or the user requests a change:
 
 - **GitHub**: issues live in the repo's GitHub Issues (uses the `gh` CLI)
 - **GitLab**: issues live in the repo's GitLab Issues (uses the [`glab`](https://gitlab.com/gitlab-org/cli) CLI)
 - **Local markdown**: issues live as files under `.scratch/<feature>/` in this repo (good for solo projects or repos without a remote)
 - **Other** (Jira, Linear, etc.): ask the user to describe the workflow in one paragraph; the skill will record it as freeform prose
 
-Record the choice in `docs/agents/issue-tracker.md`. The GitHub and GitLab templates carry a "PRs as a request surface" flag, defaulted **off**. Leave it off and don't raise it: a user who wants external PRs in the triage queue can flip the flag in the file later.
+Keep the existing tracker guide in its authoritative location. For a new guide, use `docs/agents/issue-tracker.md`. If a consumer requires that default path but the guide already lives elsewhere, propose only a pointer, not a second guide. The GitHub and GitLab templates carry a "PRs as a request surface" flag, defaulted **off**. Leave it off and don't raise it: a user who wants external PRs in the triage queue can flip the flag in the file later.
 
-A GitHub or GitLab tracker needs a reachable repo. When the user picks one and no `git remote` points at that host, get the repo URL from them and wire it up (`git init` if needed, `git remote add origin <url>`) before going further. Done when `gh repo view` / `glab repo view` prints the project from inside this directory; if it can't, stop and tell the user what's missing.
+A GitHub or GitLab tracker needs a reachable repo. If the user selects one without a matching remote, confirm the project URL and check that it is reachable without writing. Connecting the remote (or initialising Git if needed) is a separate change: describe it and wait for specific approval before doing it. If the project cannot be verified, report the missing dependency.
 
 **Section B: Triage label vocabulary.** Skip this section entirely if the `triage` skill isn't installed (exploration told you), since an uninstalled skill needs no labels.
 
-If it is installed, ask exactly one question:
+If it is installed and there is no existing mapping, ask exactly one question:
 
 > Do you want to keep the default triage labels? (recommended: **yes**)
 
 The defaults are the five canonical roles, each label string equal to its name: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. On **yes**, write them as-is. Only if the user says no, usually because their tracker already uses other names (e.g. `bug:triage` for `needs-triage`), collect the overrides so `triage` applies existing labels instead of creating duplicates.
 
-**Section C: Domain docs.** Default to **single-context** (root `GLOSSARY.md` and `docs/adr/`) without asking a layout question. Record the layout in the draft `docs/agents/domain.md`; glossary changes require separate approval. If Section D turns wiki mode on, record `wiki/decisions/` instead of `docs/adr/`.
+**Section C: Domain docs.** Reuse existing glossary and ADR locations. For a fresh repo, default to **single-context** (root `GLOSSARY.md` and `docs/adr/`) without asking a layout question. Record the chosen layout in the domain guide; glossary changes require separate approval. Section D supplies the paths if using a wiki.
 
 Preserve an existing `GLOSSARY-MAP.md` and its multi-context layout regardless of monorepo signals. Offer a new **multi-context** layout only when exploration found monorepo signals. Then confirm which layout they want.
 
 **Section D: Wiki mode.** Ask in every repo, including one with no `wiki/` yet — an LLM wiki is
 cheap to start and expensive to retrofit.
 
-> Does this repo keep its knowledge in an LLM wiki? (recommended: **yes** when `wiki/index.md`
-> exists, **bootstrap it** when the repo has neither `wiki/` nor `docs/adr/`, **no** otherwise)
+> Does this repo keep its knowledge in an LLM wiki? (recommend the existing wiki if any, **no** if the
+> repo already has non-wiki domain or ADR conventions, and **bootstrap it** only if neither exists)
 
 Three answers, not two:
 
@@ -76,16 +78,15 @@ Three answers, not two:
 - **Yes, bootstrap** — create the minimum: `wiki/index.md`, `wiki/decisions/`,
   `wiki/processes/grill/`, `wiki/processes/governance.md`. Nothing else: an empty page nobody
   maintains is worse than no page, and a wiki that starts as a graveyard is abandoned in a month.
-- **No** — ADRs go to `docs/adr/`, ledgers to `docs/agents/grill/`, and no `## Wiki` block is written.
+- **No**: keep the repo's non-wiki paths if present; otherwise default to `docs/adr/` and `docs/agents/grill/`. Do not draft a `## Wiki` block.
 
-On **yes** (either flavour), the ADR path in `docs/agents/domain.md` becomes `wiki/decisions/`, the
-interview ledger becomes `wiki/processes/grill/<slug>.md`, and `GLOSSARY.md` stays at the repo root
-because an agent reads it in one call. The full mapping, the merged frontmatter and the idempotent
-bootstrap live in `wiki-layout.md` in this skill's directory: read it before writing.
+For a new wiki, use `wiki/decisions/` for ADRs and `wiki/processes/grill/<slug>.md` for ledgers.
+For an existing wiki, use its actual paths in the domain guide and instruction pointers, even when
+they differ from [the wiki seed](./wiki-layout.md). Read the seed for bootstrap and frontmatter when needed.
 
 **The decisions register has one shape, and setup must respect the one the repo already has.**
 
-- New decisions are files: `wiki/decisions/NNNN-<slug>.md`.
+- New decisions follow the established ADR convention; the new-wiki default is `wiki/decisions/NNNN-<slug>.md`.
 - If a single-file register already exists (`wiki/decisions.md`, `docs/decisions.md`), it becomes the
   **index**: link the new ADRs from it, leave its history in place. Do not rename it, do not move it,
   and do not split its old content in this run — a rename breaks links across the repo and in whatever
@@ -110,37 +111,29 @@ Write them into the `## Wiki` block only when wiki mode is on, and phrase them i
   has. If it has none, propose `USER_CONFIRMED / OBSERVED / INFERRED / PROPOSED` rather than
   inventing a ranking like `confidence: high` that no one can check against anything.
 
-### 3. Confirm and edit
+**Section F: Excel repository setup.** Before showing any diff, offer a clear choice to include workbook versioning, even if the repo has no workbook. Recommend it when the user mentioned Excel work or exploration found an Excel scaffold. Record explicit opt-in to use the shared Excel procedure in step 3. Do not invoke or install `/setup-excel-repo`. On refusal or no opt-in, leave Excel rules, pointers, standard and artifacts untouched.
 
-Show the user a draft of:
+### 3. Propose and confirm
 
-- The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
-- When a new instruction file is being created: the whole filled `agents-template.md`, with the
-  sections that don't apply already removed, not just the block
-- The contents of `docs/agents/issue-tracker.md`, `docs/agents/domain.md`, and `docs/agents/triage-labels.md` (the last only when `triage` is installed)
+Use the drafting rules below to prepare one proposal with the exact diff, including new files. With Excel opt-in, merge the general and Excel edits to shared files before showing the diff, and include the Excel findings and unresolved dependencies. The decision to include Excel is not approval to write these files, publish an Issue or operate on a workbook.
 
-Let them edit before writing.
+In every explicit run, follow the [shared glossary procedure](./shared-glossary-setup.md). Show its exact diff in the same proposal as a separately approvable part. Before writing, get explicit approval of the exact setup diff and separate approval for any glossary changes. A declined or unapproved part is left untouched. If that changes edits in the approved part, show the revised diff and get fresh approval. Report an empty diff without writing.
 
-In every explicit run, follow the [shared glossary procedure](./shared-glossary-setup.md) from the start: load the bundle, compare the definitions and show the proposal. Keep glossary approval separate from the rest of setup.
+**Pick the file for the proposal:**
 
-### 4. Write
-
-Write only approved changes. Skip any setup file whose proposed contents are identical to its current contents.
-
-**Pick the file to edit:**
-
-- If `CLAUDE.md` exists, edit it.
-- Else if `AGENTS.md` exists, edit it.
+- Use the existing instruction file the harness reads, following any pointer to the canonical file. If Excel is included, use that same file for both sets of guidance.
 - If neither exists, ask the user which one to create; don't pick for them.
 - When the user chose to create one, start from `agents-template.md` in this skill's directory.
   It covers what these skills expect (tracker, wiki, provenance, git discipline) plus the generic
   rules a repo needs and no skill owns: autonomy limits, safe text editing, change boundaries,
-  versioning, and retention. Leave the Excel and Power Query sections out of new instruction files;
-  the optional Excel handoff below is separate. Fill in the `<...>` placeholders,
+  versioning, and retention. Leave the template's Excel and Power Query sections out; only the
+  shared Excel procedure supplies the Excel pointer after opt-in. Fill in the `<...>` placeholders,
   **delete the sections that don't apply**, and append the `## Agent skills` / `## Wiki` blocks.
   Never ship the template with placeholders: a dead section reads as a requirement.
 
-Never create `AGENTS.md` when `CLAUDE.md` already exists (or vice versa); always edit the one that's already there.
+Keep one authoritative set of instructions. If the harness does not read the existing canonical file, propose a native pointer to it rather than copying its rules.
+
+Once the instruction target and engineering choices are settled, follow [Discover and Plan in the shared Excel procedure](./excel-setup.md) if the user opted in. Use those choices instead of standalone defaults.
 
 If an `## Agent skills` block already exists in the chosen file, update its contents in-place rather than appending a duplicate. Don't overwrite user edits to the surrounding sections.
 
@@ -154,7 +147,7 @@ Editing an existing instruction file is surgery, not a rewrite:
 - If the file has `USER_CONFIRMED` markers or similar, treat them as immutable: your block is a new
   section, not an edit to their decisions.
 
-The block:
+The block (use the actual guide locations; these are defaults):
 
 ```markdown
 ## Agent skills
@@ -172,8 +165,7 @@ The block:
 [one-line summary of layout: "single-context" or "multi-context"]. See `docs/agents/domain.md`.
 ```
 
-That is one section. When Section D said yes, write a **second, separate** section at the end of the
-file — two headings, not one merged block:
+That is one section. When Section D said yes, use a **second, separate** section. Reuse an existing `## Wiki` block and substitute the actual wiki paths:
 
 ```markdown
 ## Wiki
@@ -188,11 +180,9 @@ file — two headings, not one merged block:
 The two bracketed lines come from Section E; fill them in the repo's language, or drop them when the
 repo has neither milestones nor a second backlog to disambiguate.
 
-Include the `### Triage labels` sub-block, and write `docs/agents/triage-labels.md`, only when `triage` is installed and Section B ran. When it isn't, both are omitted.
+Preserve existing triage guidance. Draft a missing `### Triage labels` sub-block or guide only when `triage` is installed; link the established mapping or the new guide from Section B.
 
-When Section B ran on GitHub or GitLab, create each configured label the tracker lacks (`gh label create` / `glab label create`).
-
-Then write the docs files using the seed templates in this skill folder as a starting point:
+Draft missing docs using the seed templates in this skill folder as a starting point. Keep existing valid docs and links rather than regenerating them:
 
 - [issue-tracker-github.md](./issue-tracker-github.md): GitHub issue tracker
 - [issue-tracker-gitlab.md](./issue-tracker-gitlab.md): GitLab issue tracker
@@ -200,9 +190,15 @@ Then write the docs files using the seed templates in this skill folder as a sta
 - [triage-labels.md](./triage-labels.md): label mapping (only if `triage` is installed)
 - [domain.md](./domain.md): domain doc consumer rules + layout
 
-[Apply the approved glossary proposal](./shared-glossary-setup.md#apply).
+Replace template defaults with confirmed locations in all draft files, including existing non-wiki ADR paths and indexes. If the GitHub or GitLab project differs from the remote, record the confirmed project explicitly and replace remote inference in its draft tracker guide.
 
-For "other" issue trackers, write `docs/agents/issue-tracker.md` from scratch using the user's description.
+For a new "other" issue tracker guide, use the user's description instead of a template.
+
+### 4. Apply
+
+Recheck the proposed files and dependencies. If they changed and invalidate the diff, stop and obtain approval for the revised diff. Write only approved changes and skip identical files. [Apply approved glossary edits](./shared-glossary-setup.md#apply) separately. With Excel opt-in, use the shared procedure's Apply and Check step for its portion.
+
+If triage is configured on GitHub or GitLab, check the approved or existing mapping, including on reruns that skip the mapping question. In every label command target the verified configured project explicitly, not the inferred remote. Report any missing labels and the target project. Create them only with separate approval for that exact project and those labels. If the project cannot be verified, report it and skip the operation. Diff approval alone does not cover a tracker mutation.
 
 ### 5. Done
 
@@ -210,23 +206,14 @@ Tell the user what setup changed and which engineering skills will read those fi
 
 Before you say it's done, prove it — read back what you wrote and report the result, not the intention:
 
-- `docs/agents/` holds the files you claim (list them).
+- The engineering links resolve to the claimed guides (list their actual locations).
 - The instruction file has exactly one `## Agent skills` block, and one `## Wiki` block when wiki mode
   is on.
-- In wiki mode: `wiki/decisions/` exists, and the decisions index is either new or untouched apart
+- In wiki mode: the configured ADR location is correct, and the decisions index is either new or untouched apart
   from the added links.
 - `git diff --check` passes. For brand-new files git has nothing to check, so run
   `git diff --no-index --check -- NUL <file>` (or `/dev/null` on unix) on each one.
-- Report what you deliberately did **not** do: no commit, no renames, no binary or Excel-adjacent
-  files touched, no migration of existing wiki content.
+- Show the actual diff, including new files. Report any Excel changes or blockers from the shared procedure's check. Distinguish those repo edits from what setup does not do: commit, publish Issues, touch workbooks or migrate wiki content.
 
 Configuring a repo is not a milestone. If the repo records milestones, say plainly that this run
-consumed none.
-
-If the user wants to version Excel logic or structure, or exploration found an Excel scaffold,
-offer the optional `/setup-excel-repo` beta. If Excel intent is unknown, mention that the option
-also works before the first workbook. On explicit opt-in, give exactly one next step: run
-`/setup-excel-repo` themselves in this repo if available in their harness. This satisfies the
-closing report. On refusal, leave the Excel scaffold untouched. Matt's setup does not
-invoke or install the beta, create or edit its scaffold, or onboard a workbook. The beta reuses
-the tracker and knowledge layout configured here.
+ consumed none.

@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Invoke /setup-excel-repo on a Git repo without a workbook, remote or tracker. Review the proposed diff, approve it, and then invoke the command again unchanged. Start a separate agent without setup and ask it where to review formulas and record the first ADR.",
-      "expected_output": "Before approval the proposed diff includes a new root CODING_STANDARDS.md with the complete, unmodified canonical section and its source version; nothing is written. After approval AGENTS.md links docs/agents/{excel,domain,issue-tracker,triage-labels}.md without requiring a standards pointer. Local Markdown and single-context are discoverable. No workbook or stub directories. Rerun preserves file hashes; a fresh agent follows the repo links without setup.",
+      "prompt": "Invoke /setup-excel-repo on a Git repo without a workbook, remote or tracker. Approve the exact setup diff and separately approve its shared glossary diff. Invoke the command again unchanged. Start a separate agent without setup and ask it where to review formulas and record the first ADR.",
+      "expected_output": "One exact diff includes root CODING_STANDARDS.md with the complete unmodified canonical section and the missing engineering minimum, with a separate approval decision for shared root GLOSSARY.md. Nothing is written before approval. No Matt invocation, full interview, wiki bootstrap or generic instruction template. After approval AGENTS.md links docs/agents/{excel,domain,issue-tracker,triage-labels}.md without a standards pointer. Local Markdown and single-context are discoverable. No workbook or stub directories. Rerun preserves file hashes; a fresh agent follows the repo links without setup.",
       "files": []
     },
     {
@@ -15,14 +15,14 @@
     },
     {
       "id": 3,
-      "prompt": "Invoke Matt's setup on a repo with no workbooks, but with Excel versioning planned. Finish engineering setup and explicitly accept its optional Excel offer.",
-      "expected_output": "The user receives /setup-excel-repo as the sole next step. The beta is not invoked or installed, no Excel scaffold or standard is written, and no workbook is onboarded.",
+      "prompt": "On a fresh Git repo without a remote or workbook, start Matt's setup for planned Excel work. Choose Local Markdown, default triage labels, a single context and no wiki. Explicitly opt in to Excel, but withhold approval of any file diff. After reviewing the proposal, approve the exact general and Excel diff and separately approve the glossary diff. Rerun with the same answers.",
+      "expected_output": "There is one proposal with ordinary engineering setup, the shared glossary diff identified for separate approval, the Excel contract and the canonical Excel section in root CODING_STANDARDS.md. One active instruction file contains both sets of pointers; there is one tracker, one glossary and one standard. Opt-in alone writes nothing and does not authorize publication or workbook work. No second public command, installation, workbook entry, empty workbook scaffold directory or stub export. After approval only the approved files are written and read back; an unchanged rerun has no diff and leaves file hashes unchanged.",
       "files": []
     },
     {
       "id": 4,
-      "prompt": "Invoke Matt's setup on a repo with an Excel scaffold but no workbook. Finish engineering setup and decline the optional Excel offer.",
-      "expected_output": "The existing Excel scaffold and any Excel standards remain byte-for-byte intact and the beta is not invoked, installed or recommended as the next step.",
+      "prompt": "Start Matt's setup in a fresh repo with no workbook, no remote and a planned Excel use. Decline Excel and approve general setup only. Repeat on a repo whose active instructions already include an Excel pointer and whose Excel contract and CODING_STANDARDS.md are present.",
+      "expected_output": "The fresh repo gets only approved general engineering changes, no Excel pointer, contract, standard, directory or workbook. In the second repo the Excel pointer, contract and standards remain byte-for-byte intact. Neither proposes a second public command or installs the beta.",
       "files": []
     },
     {
@@ -47,6 +47,12 @@
       "id": 8,
       "prompt": "Reuse the fixture-only standalone workflow described at https://github.com/ciahciach/skills/issues/15#issuecomment-7111802420: provide the candidate SKILL.md and its actual references to the test adapter and run it only against disposable repo files. The repo has no workbook or due exports, a matching shared Excel standard and complete engineering guidance. AGENTS.md links playbooks/excel.md and team/workbooks.md as equally active Excel instructions. Both meet the workflow rules, except that each claims a different authoritative path for editable M source: managed/query-source/ and team/query-source/. On the first run confirm this conflict has not been handled before. Rerun in the same conversation, then in a fresh session without access to the earlier draft; do not confirm another draft. Grant no write or publication approval. On a separate fixture copy where the owner has reconciled both instructions to point to managed/query-source/, plan standalone setup again.",
       "expected_output": "Before reconciliation, the report cites both active instructions and both conflicting paths. It blocks selecting a source for controlled import and drafts a single Issue for the existing tracker with criteria for one owner-confirmed, discoverable source of truth. It does not choose a path, migrate, create a new scaffold, write files or publish. Both reruns retain the blocker without a diff or a duplicate proposal. In the reconciled repo, report current scaffold, no workbook to onboard and runtime not assessed; no diff, stubs or Issue proposal.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "On two copies of a repo with no workbook, run Matt with Excel opt-in on the first and standalone Excel setup on the second. CLAUDE.md points at AGENTS.md, which links an established Linear tracker and triage mapping, custom ADR guidance in a docs/architecture/ index, and playbooks/excel.md. The repo has a GitHub remote but no wiki or docs/adr/. One legacy acceptance rule in the runbook is outdated. Root GLOSSARY.md has a local Worktree definition and GLOSSARY-MAP.md links it and a domain context. CODING_STANDARDS.md has a matching shared section and separate local rules. Accept the recommended existing choices, approve the exact setup diff and decline the shared glossary diff. Rerun with the same choices.",
+      "expected_output": "Both proposals target only necessary changes in the active chain and Excel runbook; no parallel tracker, glossary, runbook, ADR index or standard. Active links, local definitions, context mappings and local rules survive. Declining glossary does not authorize its diff; on rerun it may still be offered, but no setup edit or duplicate pointer is proposed, and no files are written unless separately approved.",
       "files": []
     }
   ]

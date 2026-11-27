@@ -2,7 +2,7 @@
 
 Beta. These skills are public on purpose: try them and tell me what breaks. They're excluded from the plugin and the top-level README until they graduate to a stable bucket, they get no docs pages, and they can change or disappear without warning.
 
-The plugin won't give you these. Install one directly:
+The plugin won't give you these. For betas other than `setup-excel-repo`, install one directly:
 
 ```bash
 npx skills@latest add mattpocock/skills --skill=<name>
@@ -14,7 +14,7 @@ npx skills@latest add mattpocock/skills --skill=<name>
 - **[writing-shape](./writing-shape/SKILL.md)**: Take a markdown file of raw material and shape it into an article paragraph by paragraph, arguing format choices at each step.
 - **[claude-handoff](./claude-handoff/SKILL.md)**: Hand the current conversation off to a fresh background agent that picks up the work immediately, seeded with a handoff summary via `claude --bg`. User-invoked.
 - **[setup-ts-deep-modules](./setup-ts-deep-modules/SKILL.md)**: Wire dependency-cruiser into a TypeScript repo so each package is a deep module: implementation hidden in subfolders, reachable only through its entry-point files, tests exercising it through those. User-invoked.
-- **[setup-excel-repo](./setup-excel-repo/SKILL.md)**: Configure or adopt a repository scaffold for Excel workbook versioning, even before the first workbook. User-invoked.
+- **[setup-excel-repo](./setup-excel-repo/SKILL.md)**: Configure or adopt a repository scaffold for Excel workbook versioning, even before the first workbook. User-invoked; it needs no prior Matt setup run. Use the beta from a source checkout or a link to it: an install that copies only the beta directory omits its shared references.
 - **[excel-router](./excel-router/SKILL.md)**: Select a scoped interface for Windows Excel work in Kilo VS Code by evidence or bounded synthetic qualification. Model-invoked.
 - **[excel-com-safe](./excel-com-safe/SKILL.md)**: Use explicitly selected Windows Excel COM safely, including bounded synthetic formula and native UserForm probes. Model-invoked.
 - **[software-factory](./software-factory/SKILL.md)**: Shared language for designing a software factory: the tasks it runs and the services it plugs into. Call it alongside a grilling session. User-invoked.
